@@ -12,6 +12,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import create_react_agent
 
+from app.agents.middleware import get_memory_store
 from app.agents.prompts.general import GENERAL_SYSTEM_PROMPT
 from app.config import settings
 
@@ -63,6 +64,7 @@ def create_deep_agent(
     tools: Sequence[BaseTool] | None = None,
     system_prompt: str | None = None,
     checkpointer: Any | None = None,
+    store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
 ) -> CompiledStateGraph:
     """Create a LangGraph ReAct agent with the given configuration.
@@ -80,6 +82,9 @@ def create_deep_agent(
     checkpointer:
         LangGraph checkpointer for persisting thread state across invocations.
         Defaults to an in-memory ``MemorySaver``.
+    store:
+        LangGraph memory store for cross-turn context persistence.
+        Defaults to the shared ``InMemoryStore`` from middleware.
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
 
@@ -92,12 +97,14 @@ def create_deep_agent(
     prompt = system_prompt or GENERAL_SYSTEM_PROMPT
     agent_tools: list[BaseTool] = list(tools) if tools else []
     saver = checkpointer if checkpointer is not None else MemorySaver()
+    memory_store = store if store is not None else get_memory_store()
 
     logger.info(
-        "Creating deep agent: model=%s, tools=%d, checkpointer=%s",
+        "Creating deep agent: model=%s, tools=%d, checkpointer=%s, store=%s",
         model_name or settings.default_model,
         len(agent_tools),
         type(saver).__name__,
+        type(memory_store).__name__,
     )
 
     agent = create_react_agent(
@@ -105,6 +112,7 @@ def create_deep_agent(
         tools=agent_tools,
         prompt=prompt,
         checkpointer=saver,
+        store=memory_store,
     )
 
     return agent
