@@ -1,0 +1,224 @@
+# .github/workflows/deploy-production.yml
+name: Deploy — Production
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: production
+  PROJECT: symphony
+  ECS_CLUSTER: symphony-production-cluster
+  BACKEND_SERVICE: symphony-production-backend
+  FRONTEND_SERVICE: symphony-production-frontend
+  BACKEND_ECR_REPO: symphony/backend
+  FRONTEND_ECR_REPO: symphony/frontend
+
+jobs:
+  # -------------------------------------------------------------------
+  # Build images
+  # -------------------------------------------------------------------
+  build-backend:
+    name: Build Backend Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & push backend
+        id: build
+        uses: ./.github/actions/docker-build-push
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          ecr-repository: ${{ env.BACKEND_ECR_REPO }}
+          context: backend
+          image-tag: ${{ github.ref_name }}
+          extra-tags: |
+            sha-${{ github.sha }}
+
+  build-frontend:
+    name: Build Frontend Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & push frontend
+        id: build
+        uses: ./.github/actions/docker-build-push
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          ecr-repository: ${{ env.FRONTEND_ECR_REPO }}
+          context: frontend
+          image-tag: ${{ github.ref_name }}
+          extra-tags: |
+            sha-${{ github.sha }}
+
+  # -------------------------------------------------------------------
+  # Manual approval gate
+  # -------------------------------------------------------------------
+  approve:
+    name: Production Approval
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    environment: production          # ← requires Environment protection rules
+    steps:
+      - name: Approval received
+        run: echo "Production deployment approved for ${{ github.ref_name }}"
+
+  # -------------------------------------------------------------------
+  # Database migrations
+  # -------------------------------------------------------------------
+  migrate:
+    name: Run DB Migrations
+    needs: [approve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run Alembic migrations via ECS task
+        run: |
+          TASK_DEF="${PROJECT}-${ENVIRONMENT}-backend"
+          NETWORK_CONFIG=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$BACKEND_SERVICE" \
+            --query 'services[0].networkConfiguration' \
+            --output json)
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides '{
+              "containerOverrides": [{
+                "name": "backend",
+                "command": ["alembic", "-c", "db/migrations/alembic.ini", "upgrade", "head"]
+              }]
+            }' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+          echo "Migrations completed successfully."
+
+  # -------------------------------------------------------------------
+  # Deploy services
+  # -------------------------------------------------------------------
+  deploy:
+    name: Deploy to ECS
+    needs: [migrate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update backend service
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$BACKEND_SERVICE" \
+            --force-new-deployment \
+            --query 'service.serviceName' \
+            --output text
+
+      - name: Update frontend service
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$FRONTEND_SERVICE" \
+            --force-new-deployment \
+            --query 'service.serviceName' \
+            --output text
+
+      - name: Wait for backend deployment stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$BACKEND_SERVICE"
+
+      - name: Wait for frontend deployment stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$FRONTEND_SERVICE"
+
+  # -------------------------------------------------------------------
+  # Smoke tests
+  # -------------------------------------------------------------------
+  smoke-test:
+    name: Smoke Tests
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve production URL
+        id: url
+        run: |
+          PROD_URL="${{ secrets.PRODUCTION_URL }}"
+          if [ -z "$PROD_URL" ]; then
+            PROD_URL="https://${PROJECT}.dev"
+          fi
+          echo "base_url=${PROD_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Health check — backend API
+        run: |
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+              "${{ steps.url.outputs.base_url }}/api/health" || true)
+            echo "Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Backend health check failed"
+          exit 1
+
+      - name: Health check — frontend
+        run: |
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+              "${{ steps.url.outputs.base_url }}/" || true)
+            echo "Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Frontend health check failed"
+          exit 1

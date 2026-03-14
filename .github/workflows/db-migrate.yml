@@ -1,0 +1,124 @@
+# .github/workflows/db-migrate.yml
+name: DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      direction:
+        description: Migration direction
+        required: true
+        type: choice
+        options:
+          - upgrade
+          - downgrade
+      revision:
+        description: "Target revision (default: head for upgrade, -1 for downgrade)"
+        required: false
+        default: ""
+
+concurrency:
+  group: db-migrate-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT: symphony
+
+jobs:
+  migrate:
+    name: "${{ inputs.direction }} — ${{ inputs.environment }}"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.environment == 'production' && secrets.AWS_PROD_DEPLOY_ROLE_ARN || secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve migration command
+        id: cmd
+        run: |
+          DIRECTION="${{ inputs.direction }}"
+          REVISION="${{ inputs.revision }}"
+
+          if [ "$DIRECTION" = "upgrade" ]; then
+            TARGET="${REVISION:-head}"
+          else
+            TARGET="${REVISION:--1}"
+          fi
+
+          echo "command=alembic -c db/migrations/alembic.ini ${DIRECTION} ${TARGET}" >> "$GITHUB_OUTPUT"
+          echo "Migration: alembic ${DIRECTION} ${TARGET}"
+
+      - name: Run migration via ECS task
+        run: |
+          ENV="${{ inputs.environment }}"
+          CLUSTER="${PROJECT}-${ENV}-cluster"
+          SERVICE="${PROJECT}-${ENV}-backend"
+          TASK_DEF="${PROJECT}-${ENV}-backend"
+
+          NETWORK_CONFIG=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --query 'services[0].networkConfiguration' \
+            --output json)
+
+          CMD='${{ steps.cmd.outputs.command }}'
+          # Split command into JSON array for container override
+          CMD_JSON=$(echo "$CMD" | jq -R 'split(" ")')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides "{
+              \"containerOverrides\": [{
+                \"name\": \"backend\",
+                \"command\": ${CMD_JSON}
+              }]
+            }" \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Migration task: $TASK_ARN"
+          echo "Command: $CMD"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration failed with exit code $EXIT_CODE"
+
+            # Fetch logs for debugging
+            TASK_ID=$(echo "$TASK_ARN" | awk -F'/' '{print $NF}')
+            echo "--- Migration logs ---"
+            aws logs get-log-events \
+              --log-group-name "/ecs/${PROJECT}-${ENV}/backend" \
+              --log-stream-name "backend/${TASK_ID}" \
+              --query 'events[].message' \
+              --output text 2>/dev/null || echo "(could not fetch logs)"
+
+            exit 1
+          fi
+
+          echo "Migration completed successfully."

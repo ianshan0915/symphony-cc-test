@@ -1,0 +1,93 @@
+# .github/actions/docker-build-push/action.yml
+# Reusable composite action — build & push a Docker image to Amazon ECR.
+name: Docker Build & Push to ECR
+description: Build a Docker image and push it to an ECR repository using OIDC credentials.
+
+inputs:
+  aws-region:
+    description: AWS region for ECR
+    required: false
+    default: us-east-1
+  role-to-assume:
+    description: IAM role ARN to assume via OIDC
+    required: true
+  ecr-repository:
+    description: "ECR repository name (e.g. symphony/backend)"
+    required: true
+  context:
+    description: Docker build context path
+    required: true
+  dockerfile:
+    description: Path to Dockerfile (relative to context)
+    required: false
+    default: Dockerfile
+  image-tag:
+    description: Primary image tag
+    required: true
+  extra-tags:
+    description: "Newline-separated extra tags (e.g. latest)"
+    required: false
+    default: ""
+  build-args:
+    description: "Newline-separated Docker build args"
+    required: false
+    default: ""
+  target:
+    description: Docker build target stage
+    required: false
+    default: ""
+
+outputs:
+  image:
+    description: Full image URI with primary tag
+    value: ${{ steps.meta.outputs.image }}
+  digest:
+    description: Image digest
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Login to Amazon ECR
+      id: ecr-login
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Compute image metadata
+      id: meta
+      shell: bash
+      run: |
+        REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+        REPO="${{ inputs.ecr-repository }}"
+        TAG="${{ inputs.image-tag }}"
+        echo "image=${REGISTRY}/${REPO}:${TAG}" >> "$GITHUB_OUTPUT"
+
+        # Build full tag list
+        TAGS="${REGISTRY}/${REPO}:${TAG}"
+        IFS=$'\n'
+        for extra in ${{ inputs.extra-tags }}; do
+          extra=$(echo "$extra" | xargs)  # trim whitespace
+          [ -n "$extra" ] && TAGS="${TAGS},${REGISTRY}/${REPO}:${extra}"
+        done
+        echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and push
+      id: build
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        build-args: ${{ inputs.build-args }}
+        target: ${{ inputs.target || '' }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
