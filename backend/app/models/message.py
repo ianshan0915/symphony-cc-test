@@ -41,7 +41,7 @@ class Message(Base):
     )
 
     # Relationships
-    thread: Mapped["Thread"] = relationship(  # noqa: F821
+    thread: Mapped["Thread"] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Thread", back_populates="messages"
     )
 

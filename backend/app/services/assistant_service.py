@@ -67,9 +67,7 @@ class AssistantService:
 
         return assistants, total
 
-    async def update(
-        self, assistant_id: uuid.UUID, data: AssistantUpdate
-    ) -> Assistant | None:
+    async def update(self, assistant_id: uuid.UUID, data: AssistantUpdate) -> Assistant | None:
         """Update an assistant configuration."""
         assistant = await self.get(assistant_id)
         if assistant is None:

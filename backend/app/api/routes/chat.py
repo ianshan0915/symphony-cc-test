@@ -139,9 +139,7 @@ async def chat_stream(
         # Persist assistant response after streaming completes
         if full_content:
             try:
-                await _persist_assistant_message(
-                    session, thread, full_content, tool_calls or None
-                )
+                await _persist_assistant_message(session, thread, full_content, tool_calls or None)
             except Exception:
                 logger.exception("Failed to persist assistant message for thread %s", thread.id)
                 yield SSEEvent(

@@ -12,9 +12,9 @@ import pytest
 _ws_mod_name = "app.agents.tools.web_search"
 
 # Get the real module (may have been replaced in sys.modules by the @tool decorator)
-_ws_module = vars(sys.modules.get("app.agents.tools", {})).get(
-    "web_search"
-) or sys.modules.get(_ws_mod_name)
+_ws_module = vars(sys.modules.get("app.agents.tools", {})).get("web_search") or sys.modules.get(
+    _ws_mod_name
+)
 
 # Import the symbols we need directly
 from app.agents.tools.web_search import (  # noqa: E402

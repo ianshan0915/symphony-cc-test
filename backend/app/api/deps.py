@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +55,7 @@ async def get_assistant_service(
 _redis_client = None
 
 
-async def _get_redis():
+async def _get_redis() -> Any:
     """Lazily initialise and return the async Redis client."""
     global _redis_client
     if _redis_client is None:
@@ -104,7 +105,8 @@ class RateLimiter:
             return  # No Redis → rate limiting disabled
 
         # Identify user: prefer authenticated user id, fall back to IP
-        user_id = getattr(request.state, "user_id", None) or request.client.host
+        client = request.client
+        user_id = getattr(request.state, "user_id", None) or (client.host if client else "unknown")
         endpoint = request.url.path
         key = f"{self.key_prefix}:{user_id}:{endpoint}"
 

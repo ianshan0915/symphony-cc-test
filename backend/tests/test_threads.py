@@ -136,9 +136,7 @@ class TestThreadServiceUpdate:
     @pytest.mark.asyncio
     async def test_update_metadata(self, thread_service: ThreadService) -> None:
         thread = await thread_service.create(ThreadCreate(title="Meta"))
-        updated = await thread_service.update(
-            thread.id, ThreadUpdate(metadata={"updated": True})
-        )
+        updated = await thread_service.update(thread.id, ThreadUpdate(metadata={"updated": True}))
         assert updated is not None
         assert updated.metadata_ == {"updated": True}
 
@@ -159,7 +157,8 @@ class TestThreadServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_deleted_thread_returns_none(
-        self, thread_service: ThreadService,
+        self,
+        thread_service: ThreadService,
     ) -> None:
         thread = await thread_service.create(ThreadCreate(title="Will delete"))
         await thread_service.delete(thread.id)
@@ -231,9 +230,7 @@ class TestThreadEndpointsCreate:
 
     @pytest.mark.asyncio
     async def test_create_thread_with_metadata(self, client: AsyncClient) -> None:
-        resp = await client.post(
-            "/threads", json={"title": "Meta", "metadata": {"key": "value"}}
-        )
+        resp = await client.post("/threads", json={"title": "Meta", "metadata": {"key": "value"}})
         assert resp.status_code == 201
         body = resp.json()
         # The response key depends on Pydantic alias config — check both

@@ -56,8 +56,8 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
                 "Install it with: pip install langchain-anthropic"
             ) from exc
         return ChatAnthropic(
-            model=model,
-            anthropic_api_key=settings.anthropic_api_key or None,
+            model=model,  # type: ignore[call-arg]
+            anthropic_api_key=settings.anthropic_api_key or None,  # type: ignore[call-arg]
             streaming=True,
             **kwargs,
         )
@@ -72,7 +72,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         ) from exc
     return ChatOpenAI(
         model=model,
-        api_key=settings.openai_api_key or None,
+        api_key=settings.openai_api_key or None,  # type: ignore[arg-type]
         streaming=True,
         **kwargs,
     )
