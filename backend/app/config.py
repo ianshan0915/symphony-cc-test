@@ -41,5 +41,12 @@ class Settings(BaseSettings):
     langchain_api_key: str = ""
     langchain_project: str = "symphony"
 
+    # --- Tavily Web Search ---
+    tavily_api_key: str = ""
+
+    # --- Rate Limiting ---
+    rate_limit_requests: int = 60
+    rate_limit_window_seconds: int = 60
+
 
 settings = Settings()

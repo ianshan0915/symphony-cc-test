@@ -1,13 +1,16 @@
-"""Agent tools — placeholder for future tool implementations.
+"""Agent tools registry.
 
-Tools such as web_search, knowledge_base, and code_interpreter will be
-registered here in subsequent tickets.
+Each tool module registers itself here so the agent factory can discover
+available tools by name.
 """
 
 from typing import Any
 
-# Tool registry: maps tool name -> tool callable.
-# Populated by individual tool modules as they are implemented.
-TOOL_REGISTRY: dict[str, Any] = {}
+from app.agents.tools.web_search import web_search
 
-__all__ = ["TOOL_REGISTRY"]
+# Tool registry: maps tool name -> tool callable.
+TOOL_REGISTRY: dict[str, Any] = {
+    "web_search": web_search,
+}
+
+__all__ = ["TOOL_REGISTRY", "web_search"]
