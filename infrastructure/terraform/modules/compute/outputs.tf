@@ -42,3 +42,13 @@ output "backend_service_name" {
   description = "Name of the ECS backend service"
   value       = aws_ecs_service.backend.name
 }
+
+output "alb_arn_suffix" {
+  description = "ARN suffix of the ALB (for CloudWatch metric dimensions)"
+  value       = aws_lb.main.arn_suffix
+}
+
+output "backend_target_group_arn_suffix" {
+  description = "ARN suffix of the backend target group (for CloudWatch metric dimensions)"
+  value       = aws_lb_target_group.backend.arn_suffix
+}

@@ -113,27 +113,29 @@ resource "aws_subnet" "data" {
 }
 
 # ------------------------------------------------------------------
-# Elastic IP for NAT Gateway
+# Elastic IP for NAT Gateway(s)
 # ------------------------------------------------------------------
 
 resource "aws_eip" "nat" {
+  count  = var.enable_ha_nat ? 2 : 1
   domain = "vpc"
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-nat-eip"
+    Name = "${var.project}-${var.environment}-nat-eip-${count.index}"
   })
 }
 
 # ------------------------------------------------------------------
-# NAT Gateway (single, in first public subnet)
+# NAT Gateway(s) — HA mode creates one per AZ
 # ------------------------------------------------------------------
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
+  count         = var.enable_ha_nat ? 2 : 1
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-nat-gw"
+    Name = "${var.project}-${var.environment}-nat-gw-${count.index}"
   })
 
   depends_on = [aws_internet_gateway.main]
@@ -165,26 +167,28 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private route table
+# Private route table(s) — HA mode creates one per AZ with its own NAT GW
 resource "aws_route_table" "private" {
+  count  = var.enable_ha_nat ? 2 : 1
   vpc_id = aws_vpc.main.id
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-private-rt"
+    Name = var.enable_ha_nat ? "${var.project}-${var.environment}-private-rt-${count.index}" : "${var.project}-${var.environment}-private-rt"
   })
 }
 
 resource "aws_route" "private_nat" {
-  route_table_id         = aws_route_table.private.id
+  count                  = var.enable_ha_nat ? 2 : 1
+  route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main.id
+  nat_gateway_id         = aws_nat_gateway.main[count.index].id
 }
 
 resource "aws_route_table_association" "private" {
   count = 2
 
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[var.enable_ha_nat ? count.index : 0].id
 }
 
 # Data route table (no internet access)

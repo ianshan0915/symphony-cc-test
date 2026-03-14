@@ -102,12 +102,12 @@ module "data" {
   redis_security_group_id = module.networking.redis_security_group_id
 
   # RDS sizing for staging
-  db_instance_class        = var.db_instance_class
-  db_allocated_storage     = var.db_allocated_storage
-  db_max_allocated_storage = var.db_max_allocated_storage
-  db_multi_az              = false
-  db_deletion_protection   = false
-  db_skip_final_snapshot   = false
+  db_instance_class          = var.db_instance_class
+  db_allocated_storage       = var.db_allocated_storage
+  db_max_allocated_storage   = var.db_max_allocated_storage
+  db_multi_az                = false
+  db_deletion_protection     = false
+  db_skip_final_snapshot     = false
   db_backup_retention_period = 7
 
   # Redis sizing for staging
@@ -133,10 +133,10 @@ module "compute" {
   alb_security_group_id = module.networking.alb_security_group_id
   ecs_security_group_id = module.networking.ecs_security_group_id
 
-  app_port    = var.app_port
-  app_image   = var.app_image
-  app_cpu     = var.app_cpu
-  app_memory  = var.app_memory
+  app_port      = var.app_port
+  app_image     = var.app_image
+  app_cpu       = var.app_cpu
+  app_memory    = var.app_memory
   desired_count = var.desired_count
 
   certificate_arn = var.certificate_arn
