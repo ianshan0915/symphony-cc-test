@@ -55,6 +55,7 @@ jobs:
         id: plan
         working-directory: ${{ matrix.tf_dir }}
         run: |
+          set -o pipefail
           terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan_output.txt
           echo "exitcode=$?" >> "$GITHUB_OUTPUT"
         continue-on-error: true
