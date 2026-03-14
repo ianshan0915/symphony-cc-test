@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_assistant_service
+from app.api.deps import get_assistant_service, get_current_user
 from app.models.assistant import (
     AssistantCreate,
     AssistantListResponse,
@@ -13,7 +13,11 @@ from app.models.assistant import (
 )
 from app.services.assistant_service import AssistantService
 
-router = APIRouter(prefix="/assistants", tags=["assistants"])
+router = APIRouter(
+    prefix="/assistants",
+    tags=["assistants"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post("", response_model=AssistantOut, status_code=201)

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_thread_service
+from app.api.deps import get_current_user, get_thread_service
 from app.models.thread import (
     DeleteResponse,
     ThreadCreate,
@@ -14,7 +14,7 @@ from app.models.thread import (
 )
 from app.services.thread_service import ThreadService
 
-router = APIRouter(prefix="/threads", tags=["threads"])
+router = APIRouter(prefix="/threads", tags=["threads"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("", response_model=ThreadOut, status_code=201)

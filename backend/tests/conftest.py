@@ -8,11 +8,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.deps import get_db_session
+from app.api.deps import get_current_user, get_db_session
 from app.db.base import Base
 from app.main import app
 from app.models.message import Message
 from app.models.thread import Thread, ThreadCreate
+from app.models.user import User
 from app.services.thread_service import ThreadService
 
 # Use an in-memory SQLite database for tests (requires aiosqlite).
@@ -104,8 +105,44 @@ async def multiple_threads(thread_service: ThreadService) -> list[Thread]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
-    """HTTP test client with DI overrides for the DB session."""
+async def test_user(db_session: AsyncSession) -> User:
+    """Create a test user in the DB."""
+    import uuid
+
+    user = User(
+        id=uuid.uuid4(),
+        email="test@example.com",
+        hashed_password="$2b$12$fakehash",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+async def client(db_session: AsyncSession, test_user: User) -> AsyncIterator[AsyncClient]:
+    """HTTP test client with DI overrides for the DB session and auth."""
+
+    async def _override_db_session() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    async def _override_get_current_user() -> User:
+        return test_user
+
+    app.dependency_overrides[get_db_session] = _override_db_session
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def unauthed_client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """HTTP test client without auth override (for testing 401 responses)."""
 
     async def _override_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session

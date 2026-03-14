@@ -1,9 +1,14 @@
 """Symphony backend — FastAPI application entry point."""
 
+import logging
+import sys
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from datetime import timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.assistants import router as assistants_router
@@ -14,22 +19,76 @@ from app.config import settings
 from app.db.session import engine
 from app.services.agent_service import agent_service
 
+# ---------------------------------------------------------------------------
+# Request ID context variable (propagated through the entire request lifecycle)
+# ---------------------------------------------------------------------------
+
+request_id_ctx: ContextVar[str] = ContextVar("request_id", default="-")
+
+
+# ---------------------------------------------------------------------------
+# Structured JSON logging
+# ---------------------------------------------------------------------------
+
+
+class JSONFormatter(logging.Formatter):
+    """Emit log records as single-line JSON objects.
+
+    Includes timestamp, level, logger name, message, and the current
+    request_id from the context variable so every log line within a
+    request can be correlated.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+        from datetime import datetime
+
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "request_id": request_id_ctx.get("-"),
+        }
+        if record.exc_info and record.exc_info[1]:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry, default=str)
+
+
+def _configure_logging() -> None:
+    """Replace the root logger's handlers with a structured JSON handler."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(settings.log_level.upper())
+
+    # Quieten noisy third-party loggers
+    for name in ("uvicorn.access", "uvicorn.error", "sqlalchemy.engine"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_configure_logging()
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Application lifespan
+# ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup and shutdown hooks."""
     # ----- Startup -----
-    # DB engine is lazily initialised by SQLAlchemy on first use.
-    # TODO: initialise Redis client
-
-    # Initialise LangGraph agent runtime (lazy — created on first request if
-    # not explicitly initialised here).  Accessing the property triggers
-    # creation so the agent is ready before the first request.
+    logger.info("Starting Symphony API v%s", settings.app_version)
     _ = agent_service.agent
     yield
     # ----- Shutdown -----
+    logger.info("Shutting down Symphony API")
     await engine.dispose()
-    # TODO: close Redis connection
 
 
 app = FastAPI(
@@ -46,6 +105,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Request ID middleware
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next: ...) -> Response:
+    """Inject a unique request ID into every request/response cycle.
+
+    * Reads ``X-Request-ID`` from the incoming headers (to support
+      propagation from upstream proxies/gateways).  If absent, generates
+      a new UUID4.
+    * Stores the ID in a :class:`~contextvars.ContextVar` so it is
+      available in every log line emitted during the request.
+    * Returns the ID in the ``X-Request-ID`` response header.
+    """
+    rid = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    token = request_id_ctx.set(rid)
+    request.state.request_id = rid
+
+    logger.info(
+        "Incoming %s %s",
+        request.method,
+        request.url.path,
+    )
+
+    try:
+        response: Response = await call_next(request)
+    finally:
+        request_id_ctx.reset(token)
+
+    response.headers["X-Request-ID"] = rid
+    return response
+
 
 # --- Routes ---
 app.include_router(health_router)
