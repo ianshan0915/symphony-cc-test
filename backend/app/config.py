@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # --- Tavily Web Search ---
     tavily_api_key: str = ""
 
+    # --- JWT Authentication ---
+    jwt_secret_key: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 30
+
     # --- Rate Limiting ---
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
