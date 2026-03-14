@@ -1,4 +1,4 @@
-"""SSE streaming chat endpoint."""
+"""SSE streaming chat endpoint with human-in-the-loop approval support."""
 
 from __future__ import annotations
 
@@ -31,6 +31,34 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=32_000, description="User message text")
     model: str | None = Field(default=None, description="Optional model override")
+
+
+class ApprovalDecisionRequest(BaseModel):
+    """Payload for approving or rejecting a pending tool call."""
+
+    thread_id: str = Field(..., description="Thread ID with a pending approval")
+    decision: str = Field(..., pattern="^(approve|reject)$", description="approve or reject")
+    reason: str | None = Field(default=None, description="Optional reason for rejection")
+
+
+class ApprovalDecisionResponse(BaseModel):
+    """Response after processing an approval decision."""
+
+    success: bool
+    thread_id: str
+    decision: str
+    message: str
+
+
+class PendingApprovalResponse(BaseModel):
+    """Response showing the current pending approval for a thread."""
+
+    has_pending: bool
+    approval_id: str | None = None
+    thread_id: str | None = None
+    tool_name: str | None = None
+    tool_args: dict | None = None
+    run_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +124,9 @@ async def chat_stream(
 
     - ``message_start`` — assistant turn begins
     - ``token`` — incremental text token
-    - ``tool_call`` — agent invokes a tool
+    - ``tool_call`` — agent invokes a tool (auto-approved)
+    - ``approval_required`` — agent wants to invoke a tool that requires approval
+    - ``approval_result`` — user approved or rejected the tool call
     - ``tool_result`` — tool execution result
     - ``message_end`` — assistant turn complete (includes full content)
     - ``error`` — an error occurred during processing
@@ -157,4 +187,74 @@ async def chat_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Approval decision endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/approval", response_model=ApprovalDecisionResponse)
+async def submit_approval_decision(
+    body: ApprovalDecisionRequest,
+) -> ApprovalDecisionResponse:
+    """Submit an approval or rejection decision for a pending tool call.
+
+    When the agent encounters a tool that requires human approval, the SSE
+    stream emits an ``approval_required`` event and pauses execution.  The
+    frontend should call this endpoint to approve or reject the tool call,
+    which unblocks the stream.
+
+    **Request body:**
+
+    - ``thread_id`` — the thread with a pending approval
+    - ``decision`` — ``"approve"`` or ``"reject"``
+    - ``reason`` — optional reason for rejection
+    """
+    approved = body.decision == "approve"
+    resolved = await agent_service.resolve_approval(
+        thread_id=body.thread_id,
+        approved=approved,
+        reason=body.reason,
+    )
+
+    if not resolved:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No pending approval found for thread {body.thread_id}",
+        )
+
+    decision_label = "approved" if approved else "rejected"
+    return ApprovalDecisionResponse(
+        success=True,
+        thread_id=body.thread_id,
+        decision=body.decision,
+        message=f"Tool call {decision_label} successfully",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pending approval query endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get("/approval/{thread_id}", response_model=PendingApprovalResponse)
+async def get_pending_approval(thread_id: str) -> PendingApprovalResponse:
+    """Check if a thread has a pending approval request.
+
+    Returns approval details if one is pending, or ``has_pending: false``
+    otherwise.
+    """
+    pending = agent_service.get_pending_approval(thread_id)
+    if pending is None:
+        return PendingApprovalResponse(has_pending=False)
+
+    return PendingApprovalResponse(
+        has_pending=True,
+        approval_id=pending.approval_id,
+        thread_id=pending.thread_id,
+        tool_name=pending.tool_name,
+        tool_args=pending.tool_args,
+        run_id=pending.run_id,
     )

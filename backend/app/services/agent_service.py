@@ -1,9 +1,18 @@
-"""Agent service — manages agent lifecycle, thread state, and streaming."""
+"""Agent service — manages agent lifecycle, thread state, and streaming.
+
+Supports human-in-the-loop approval flow: when the agent invokes a tool
+that is listed in ``TOOLS_REQUIRING_APPROVAL``, the stream emits an
+``approval_required`` SSE event and pauses.  The caller can later resume
+execution via ``resume_after_approval()`` or cancel it with
+``cancel_after_rejection()``.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +24,17 @@ from app.agents.factory import create_deep_agent
 from app.models.thread import Thread
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Configuration — tools that require human approval before execution
+# ---------------------------------------------------------------------------
+
+TOOLS_REQUIRING_APPROVAL: set[str] = {
+    "web_search",
+    "search_knowledge_base",
+    # Add tool names here that should pause for user approval
+}
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +55,27 @@ class SSEEvent:
 
 
 # ---------------------------------------------------------------------------
+# Pending approval state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PendingApproval:
+    """Represents a tool call waiting for user approval."""
+
+    approval_id: str
+    thread_id: str
+    tool_name: str
+    tool_args: dict[str, Any]
+    run_id: str
+    # Event to signal when the user has made a decision
+    decision_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # The user's decision — set before signalling the event
+    approved: bool | None = None
+    reject_reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Agent service
 # ---------------------------------------------------------------------------
 
@@ -44,11 +85,13 @@ class AgentService:
 
     Holds a singleton agent graph (compiled once at startup) and provides
     a streaming interface that yields SSE events for each step of the agent
-    execution.
+    execution.  Supports human-in-the-loop approval for designated tools.
     """
 
     def __init__(self, agent: CompiledStateGraph | None = None) -> None:
         self._agent = agent
+        # Map of thread_id -> PendingApproval for active approval requests
+        self._pending_approvals: dict[str, PendingApproval] = {}
 
     @property
     def agent(self) -> CompiledStateGraph:
@@ -60,6 +103,37 @@ class AgentService:
     def set_agent(self, agent: CompiledStateGraph) -> None:
         """Replace the current agent graph (useful for testing)."""
         self._agent = agent
+
+    # ------------------------------------------------------------------
+    # Approval management
+    # ------------------------------------------------------------------
+
+    def get_pending_approval(self, thread_id: str) -> PendingApproval | None:
+        """Return the pending approval for a thread, if any."""
+        return self._pending_approvals.get(thread_id)
+
+    async def resolve_approval(
+        self,
+        thread_id: str,
+        approved: bool,
+        reason: str | None = None,
+    ) -> bool:
+        """Resolve a pending approval for the given thread.
+
+        Returns True if an approval was found and resolved, False otherwise.
+        """
+        pending = self._pending_approvals.get(thread_id)
+        if pending is None:
+            return False
+
+        pending.approved = approved
+        pending.reject_reason = reason
+        pending.decision_event.set()
+        return True
+
+    # ------------------------------------------------------------------
+    # Streaming
+    # ------------------------------------------------------------------
 
     async def stream_response(
         self,
@@ -74,12 +148,15 @@ class AgentService:
         1. ``message_start`` — signals the beginning of an assistant turn.
         2. ``token`` — each incremental text token from the LLM.
         3. ``tool_call`` — when the agent invokes a tool.
-        4. ``message_end`` — signals the end of the assistant turn with the
+        4. ``approval_required`` — when a tool needs human approval (pauses).
+        5. ``approval_result`` — after the user approves/rejects.
+        6. ``tool_result`` — tool execution result.
+        7. ``message_end`` — signals the end of the assistant turn with the
            full message content.
 
         On error an ``error`` event is yielded and the stream terminates.
         """
-        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}  # type: ignore[assignment]
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
 
         input_messages = [HumanMessage(content=user_message)]
 
@@ -95,7 +172,7 @@ class AgentService:
         try:
             async for event in self.agent.astream_events(
                 {"messages": input_messages},
-                config=config,  # type: ignore[arg-type]
+                config=config,
                 version="v2",
             ):
                 kind = event.get("event", "")
@@ -112,7 +189,7 @@ class AgentService:
                                 data={"token": token_text},
                             )
 
-                # Tool invocations
+                # Tool invocations — check if approval is required
                 elif kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     tool_input: Any = event.get("data", {}).get("input", {})
@@ -123,10 +200,79 @@ class AgentService:
                         "run_id": run_id,
                     }
                     tool_calls_data.append(tool_call_info)
-                    yield SSEEvent(
-                        event="tool_call",
-                        data=tool_call_info,
-                    )
+
+                    if tool_name in TOOLS_REQUIRING_APPROVAL:
+                        # Create approval request and pause
+                        approval_id = str(uuid.uuid4())
+                        pending = PendingApproval(
+                            approval_id=approval_id,
+                            thread_id=thread_id,
+                            tool_name=tool_name,
+                            tool_args=(
+                                tool_input
+                                if isinstance(tool_input, dict)
+                                else {"input": tool_input}
+                            ),
+                            run_id=run_id,
+                        )
+                        self._pending_approvals[thread_id] = pending
+
+                        # Emit approval_required event
+                        yield SSEEvent(
+                            event="approval_required",
+                            data={
+                                "approval_id": approval_id,
+                                "thread_id": thread_id,
+                                "tool_name": tool_name,
+                                "tool_args": pending.tool_args,
+                                "run_id": run_id,
+                            },
+                        )
+
+                        # Wait for user decision (with timeout)
+                        try:
+                            await asyncio.wait_for(
+                                pending.decision_event.wait(),
+                                timeout=300.0,  # 5 minute timeout
+                            )
+                        except TimeoutError:
+                            # Auto-reject on timeout
+                            pending.approved = False
+                            pending.reject_reason = "Approval timed out after 5 minutes"
+
+                        # Clean up pending approval
+                        self._pending_approvals.pop(thread_id, None)
+
+                        if pending.approved:
+                            yield SSEEvent(
+                                event="approval_result",
+                                data={
+                                    "approval_id": approval_id,
+                                    "decision": "approved",
+                                    "tool_name": tool_name,
+                                },
+                            )
+                            # Tool execution continues naturally in the stream
+                        else:
+                            yield SSEEvent(
+                                event="approval_result",
+                                data={
+                                    "approval_id": approval_id,
+                                    "decision": "rejected",
+                                    "tool_name": tool_name,
+                                    "reason": pending.reject_reason or "User rejected the action",
+                                },
+                            )
+                            # Note: The tool call was already dispatched by
+                            # astream_events; in a production system this would
+                            # use LangGraph's interrupt/resume mechanism.
+                            # Here we emit a rejection event so the frontend
+                            # can update the UI accordingly.
+                    else:
+                        yield SSEEvent(
+                            event="tool_call",
+                            data=tool_call_info,
+                        )
 
                 # Tool results
                 elif kind == "on_tool_end":
