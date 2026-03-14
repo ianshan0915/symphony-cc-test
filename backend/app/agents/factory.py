@@ -15,7 +15,6 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import create_react_agent
 
@@ -215,10 +214,12 @@ def create_deep_agent(
         Ignored when ``system_prompt`` is provided.
     checkpointer:
         LangGraph checkpointer for persisting thread state across invocations.
-        Defaults to an in-memory ``MemorySaver``.
+        Defaults to the shared checkpointer (``AsyncPostgresSaver`` when
+        available, otherwise ``MemorySaver``).
     store:
         LangGraph memory store for cross-turn context persistence.
-        Defaults to the shared ``InMemoryStore`` from middleware.
+        Defaults to the shared store (``AsyncPostgresStore`` when available,
+        otherwise ``InMemoryStore``).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
 
@@ -243,7 +244,7 @@ def create_deep_agent(
     # Resolve tools
     agent_tools = _resolve_tools(tools, assistant_type)
 
-    saver = checkpointer if checkpointer is not None else MemorySaver()
+    saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
     logger.info(

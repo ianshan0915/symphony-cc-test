@@ -11,6 +11,7 @@ from datetime import timezone
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agents.middleware import setup_persistent_backends, teardown_persistent_backends
 from app.api.routes.assistants import router as assistants_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
@@ -84,10 +85,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup and shutdown hooks."""
     # ----- Startup -----
     logger.info("Starting Symphony API v%s", settings.app_version)
+    await setup_persistent_backends()
     _ = agent_service.agent
     yield
     # ----- Shutdown -----
     logger.info("Shutting down Symphony API")
+    await teardown_persistent_backends()
     await engine.dispose()
 
 

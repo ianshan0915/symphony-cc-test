@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     # --- Database (PostgreSQL + asyncpg) ---
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/symphony"
 
+    # --- Database connection pool tuning ---
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_recycle: int = 1800  # seconds — recycle connections after 30 min
+    db_pool_timeout: int = 30  # seconds — wait for a connection from the pool
+
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
 
@@ -52,6 +58,15 @@ class Settings(BaseSettings):
     # --- Rate Limiting ---
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
+
+    @property
+    def database_url_psycopg(self) -> str:
+        """Return a psycopg-compatible connection string.
+
+        LangGraph checkpoint/store backends use ``psycopg`` (not asyncpg),
+        so we derive a plain ``postgresql://`` URL from the SQLAlchemy one.
+        """
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 settings = Settings()
