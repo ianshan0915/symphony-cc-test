@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
 from app.api.routes.threads import router as threads_router
 from app.config import settings
 from app.db.session import engine
+from app.services.agent_service import agent_service
 
 
 @asynccontextmanager
@@ -18,7 +20,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ----- Startup -----
     # DB engine is lazily initialised by SQLAlchemy on first use.
     # TODO: initialise Redis client
-    # TODO: initialise LangGraph agent runtime
+
+    # Initialise LangGraph agent runtime (lazy — created on first request if
+    # not explicitly initialised here).  Accessing the property triggers
+    # creation so the agent is ready before the first request.
+    _ = agent_service.agent
     yield
     # ----- Shutdown -----
     await engine.dispose()
@@ -43,6 +49,7 @@ app.add_middleware(
 # --- Routes ---
 app.include_router(health_router)
 app.include_router(threads_router)
+app.include_router(chat_router)
 
 
 @app.get("/healthz")
