@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "symphony-backend"
+version = "0.1.0"
+description = "Symphony backend API"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.32,<1",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.30,<1",
+    "pydantic>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "langchain>=0.3,<1",
+    "langchain-core>=0.3,<1",
+    "langgraph>=0.3,<1",
+    "redis>=5.0,<6",
+    "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.24,<1",
+    "ruff>=0.8,<1",
+    "mypy>=1.13,<2",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,1 @@
+"""Symphony backend application."""
