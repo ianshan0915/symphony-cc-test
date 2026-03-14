@@ -1,26 +1,111 @@
-"""Tests for agent factory and agent-related functionality.
+"""Tests for agent factory and agent-related functionality (SYM-15).
 
-The agent factory is not yet implemented (depends on SYM-14/SYM-15).
-These tests validate the data models and infrastructure that support
-agent interactions (Message model with tool_calls, Thread metadata).
-
-When agent code is implemented, update these tests to cover:
+Covers:
 - Agent factory instantiation
-- Agent tool call handling
-- LangGraph checkpoint persistence
-- Multi-turn conversation state management
+- System prompt configuration
+- Message model integration with agent interactions
+- SSEEvent encoding
+- LangGraph checkpoint / thread state support
 """
 
 from __future__ import annotations
 
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.message import Message, MessageCreate, MessageOut
+from app.agents.factory import _get_chat_model, create_deep_agent
+from app.agents.prompts.general import GENERAL_SYSTEM_PROMPT
+from app.models.message import Message, MessageCreate
 from app.models.thread import Thread, ThreadCreate
 from app.services.thread_service import ThreadService
+
+# ---------------------------------------------------------------------------
+# System prompt tests
+# ---------------------------------------------------------------------------
+
+
+class TestSystemPrompt:
+    """Tests for the general-purpose system prompt."""
+
+    def test_prompt_is_non_empty(self) -> None:
+        assert len(GENERAL_SYSTEM_PROMPT) > 100
+
+    def test_prompt_contains_identity(self) -> None:
+        assert "Symphony" in GENERAL_SYSTEM_PROMPT
+
+    def test_prompt_contains_guidelines(self) -> None:
+        assert "Guidelines" in GENERAL_SYSTEM_PROMPT
+
+    def test_prompt_module_exports(self) -> None:
+        from app.agents.prompts import GENERAL_SYSTEM_PROMPT as EXPORTED_PROMPT
+        assert EXPORTED_PROMPT is GENERAL_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Agent factory tests
+# ---------------------------------------------------------------------------
+
+
+class TestAgentFactory:
+    """Tests for create_deep_agent factory function."""
+
+    @patch("app.agents.factory._get_chat_model")
+    def test_create_agent_returns_compiled_graph(self, mock_model: MagicMock) -> None:
+        """Factory should return a compiled LangGraph agent."""
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        mock_model.return_value = mock_llm
+
+        agent = create_deep_agent()
+        assert agent is not None
+        # Should be a CompiledGraph (has invoke/ainvoke/astream_events)
+        assert hasattr(agent, "ainvoke")
+        assert hasattr(agent, "astream_events")
+
+    @patch("app.agents.factory._get_chat_model")
+    def test_create_agent_with_custom_prompt(self, mock_model: MagicMock) -> None:
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        mock_model.return_value = mock_llm
+
+        agent = create_deep_agent(system_prompt="You are a test bot.")
+        assert agent is not None
+
+    @patch("app.agents.factory._get_chat_model")
+    def test_create_agent_with_custom_checkpointer(self, mock_model: MagicMock) -> None:
+        mock_llm = MagicMock()
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        mock_model.return_value = mock_llm
+
+        custom_saver = MagicMock()
+        agent = create_deep_agent(checkpointer=custom_saver)
+        assert agent is not None
+
+    def test_get_chat_model_openai_import_error(self) -> None:
+        """If langchain-openai is not installed, ImportError is raised."""
+        with patch.dict("sys.modules", {"langchain_openai": None}), pytest.raises(
+            ImportError, match="langchain-openai"
+        ):
+            _get_chat_model("gpt-4o")
+
+    def test_get_chat_model_anthropic_import_error(self) -> None:
+        """If langchain-anthropic is not installed, ImportError is raised."""
+        with patch.dict("sys.modules", {"langchain_anthropic": None}), pytest.raises(
+            ImportError, match="langchain-anthropic"
+        ):
+            _get_chat_model("claude-3-sonnet")
+
+    def test_factory_module_exports(self) -> None:
+        from app.agents import create_deep_agent as exported
+        assert callable(exported)
+
+
+# ---------------------------------------------------------------------------
+# Message model tests (data layer supporting agent interactions)
+# ---------------------------------------------------------------------------
 
 
 class TestMessageModel:
@@ -169,7 +254,6 @@ class TestMessageSchemas:
 
     def test_message_out_from_attributes(self, sample_thread: Thread) -> None:
         """MessageOut should be constructable from ORM attributes."""
-        # This uses pytest marker but doesn't need async
         pass
 
 
@@ -220,7 +304,6 @@ class TestCustomTypes:
         await db_session.refresh(thread)
 
         assert isinstance(thread.id, uuid.UUID)
-        # Fetch again to ensure retrieval works
         from sqlalchemy import select
         result = await db_session.execute(select(Thread).where(Thread.id == thread.id))
         fetched = result.scalar_one()
