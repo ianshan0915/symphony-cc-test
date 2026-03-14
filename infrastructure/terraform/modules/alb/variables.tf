@@ -65,6 +65,24 @@ variable "stickiness_duration" {
   default     = 86400
 }
 
+variable "enable_waf" {
+  description = "Enable WAF v2 Web ACL on the ALB"
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "Maximum number of requests per 5-minute period per IP"
+  type        = number
+  default     = 2000
+}
+
+variable "waf_ip_blocklist" {
+  description = "List of CIDR blocks to block via WAF (e.g. ['1.2.3.4/32'])"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Additional tags to apply to all resources"
   type        = map(string)

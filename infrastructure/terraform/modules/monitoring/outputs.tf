@@ -37,3 +37,13 @@ output "alb_log_group_name" {
   description = "CloudWatch log group name for ALB"
   value       = aws_cloudwatch_log_group.alb.name
 }
+
+output "sns_topic_arn" {
+  description = "ARN of the alarms SNS topic (empty if alarms disabled)"
+  value       = var.enable_alarms ? aws_sns_topic.alarms[0].arn : ""
+}
+
+output "dashboard_name" {
+  description = "Name of the CloudWatch dashboard (empty if dashboard disabled)"
+  value       = var.enable_dashboard ? aws_cloudwatch_dashboard.main[0].dashboard_name : ""
+}
