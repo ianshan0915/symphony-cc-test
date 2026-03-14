@@ -48,6 +48,14 @@ export function MessageList({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  // Attach scroll listener to the Radix viewport (it's the element that scrolls)
+  React.useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.addEventListener("scroll", checkAutoScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", checkAutoScroll);
+  }, [checkAutoScroll]);
+
   // Auto-scroll when messages change or loading state changes
   React.useEffect(() => {
     if (shouldAutoScroll) {
@@ -60,10 +68,7 @@ export function MessageList({
       className={cn("flex-1", className)}
       viewportRef={viewportRef}
     >
-      <div
-        className="flex flex-col gap-4 p-4"
-        onScroll={checkAutoScroll}
-      >
+      <div className="flex flex-col gap-4 p-4">
         {/* Empty state */}
         {messages.length === 0 && !isLoading && (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
