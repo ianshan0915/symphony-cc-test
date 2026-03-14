@@ -1,30 +1,66 @@
 "use client";
 
-import * as React from "react";
+import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
+import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 import { cn } from "@/lib/utils";
 
-export interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Optional ref to the scrollable viewport element */
-  viewportRef?: React.RefObject<HTMLDivElement | null>;
-}
+/**
+ * Scrollable container built on Radix ScrollArea.
+ *
+ * Provides a custom-styled scrollbar that is consistent across browsers
+ * while retaining full keyboard and assistive-technology accessibility
+ * (Radix manages ARIA roles and focus).
+ *
+ * @example
+ * ```tsx
+ * <ScrollArea className="h-72 w-full rounded-md border">
+ *   <div className="p-4">{longContent}</div>
+ * </ScrollArea>
+ * ```
+ */
+const ScrollArea = forwardRef<
+  ElementRef<typeof ScrollAreaPrimitive.Root>,
+  ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
+>(({ className, children, ...props }, ref) => (
+  <ScrollAreaPrimitive.Root
+    ref={ref}
+    className={cn("relative overflow-hidden", className)}
+    {...props}
+  >
+    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit]">
+      {children}
+    </ScrollAreaPrimitive.Viewport>
+    <ScrollBar />
+    <ScrollAreaPrimitive.Corner />
+  </ScrollAreaPrimitive.Root>
+));
+
+ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName;
 
 /**
- * A styled scrollable container with custom scrollbar styles.
+ * Custom scrollbar thumb + track for {@link ScrollArea}.
  */
-const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
-  ({ className, children, viewportRef, ...props }, ref) => {
-    return (
-      <div ref={ref} className={cn("relative overflow-hidden", className)} {...props}>
-        <div
-          ref={viewportRef}
-          className="h-full w-full overflow-y-auto custom-scrollbar"
-        >
-          {children}
-        </div>
-      </div>
-    );
-  }
-);
-ScrollArea.displayName = "ScrollArea";
+const ScrollBar = forwardRef<
+  ElementRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>,
+  ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>
+>(({ className, orientation = "vertical", ...props }, ref) => (
+  <ScrollAreaPrimitive.ScrollAreaScrollbar
+    ref={ref}
+    orientation={orientation}
+    className={cn(
+      "flex touch-none select-none transition-colors",
+      orientation === "vertical" &&
+        "h-full w-2.5 border-l border-l-transparent p-[1px]",
+      orientation === "horizontal" &&
+        "h-2.5 flex-col border-t border-t-transparent p-[1px]",
+      className,
+    )}
+    {...props}
+  >
+    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-border" />
+  </ScrollAreaPrimitive.ScrollAreaScrollbar>
+));
 
-export { ScrollArea };
+ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;
+
+export { ScrollArea, ScrollBar };

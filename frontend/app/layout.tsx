@@ -1,22 +1,25 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { ClientProvider } from "@/providers/ClientProvider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Symphony Chat",
-  description: "Agentic chat platform powered by LangChain Deep Agents",
+  description: "Agentic chat platform powered by LangGraph",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={`${inter.className} min-h-screen antialiased`}>
+        <ClientProvider>{children}</ClientProvider>
+      </body>
     </html>
   );
 }
