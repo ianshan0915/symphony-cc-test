@@ -95,10 +95,21 @@ class AgentService:
 
     @property
     def agent(self) -> CompiledStateGraph:
-        """Return the agent graph, creating one lazily if needed."""
+        """Return the default agent graph, creating one lazily if needed."""
         if self._agent is None:
             self._agent = create_deep_agent()
         return self._agent
+
+    def get_agent(self, assistant_type: str | None = None) -> CompiledStateGraph:
+        """Return an agent for the given assistant type.
+
+        If *assistant_type* is ``None`` or ``"general"``, returns the default
+        singleton agent. Specialized types create a new agent with the
+        appropriate prompt and tool configuration.
+        """
+        if not assistant_type or assistant_type == "general":
+            return self.agent
+        return create_deep_agent(assistant_type=assistant_type)
 
     def set_agent(self, agent: CompiledStateGraph) -> None:
         """Replace the current agent graph (useful for testing)."""
@@ -141,8 +152,21 @@ class AgentService:
         thread_id: str,
         user_message: str,
         thread: Thread | None = None,
+        assistant_type: str | None = None,
     ) -> AsyncIterator[SSEEvent]:
         """Stream agent response as SSE events.
+
+        Parameters
+        ----------
+        thread_id:
+            Unique thread identifier for conversation state.
+        user_message:
+            The user's input message.
+        thread:
+            Optional Thread ORM object for metadata.
+        assistant_type:
+            Agent specialization type (``"researcher"``, ``"coder"``,
+            ``"writer"``, or ``"general"``).
 
         Yields events in order:
         1. ``message_start`` — signals the beginning of an assistant turn.
@@ -160,17 +184,20 @@ class AgentService:
 
         input_messages = [HumanMessage(content=user_message)]
 
+        # Select the appropriate agent for the assistant type
+        active_agent = self.get_agent(assistant_type)
+
         # Emit message_start
         yield SSEEvent(
             event="message_start",
-            data={"thread_id": thread_id},
+            data={"thread_id": thread_id, "assistant_type": assistant_type or "general"},
         )
 
         full_content = ""
         tool_calls_data: list[dict[str, Any]] = []
 
         try:
-            async for event in self.agent.astream_events(
+            async for event in active_agent.astream_events(
                 {"messages": input_messages},
                 config=config,
                 version="v2",

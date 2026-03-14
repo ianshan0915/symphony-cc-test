@@ -31,6 +31,10 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=32_000, description="User message text")
     model: str | None = Field(default=None, description="Optional model override")
+    assistant_type: str | None = Field(
+        default=None,
+        description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
+    )
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -158,6 +162,7 @@ async def chat_stream(
             thread_id=str(thread.id),
             user_message=body.message,
             thread=thread,
+            assistant_type=body.assistant_type,
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":
