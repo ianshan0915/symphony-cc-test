@@ -15,4 +15,4 @@ TOOL_REGISTRY: dict[str, Any] = {
     "search_knowledge_base": search_knowledge_base,
 }
 
-__all__ = ["TOOL_REGISTRY", "web_search", "search_knowledge_base"]
+__all__ = ["TOOL_REGISTRY", "search_knowledge_base", "web_search"]
