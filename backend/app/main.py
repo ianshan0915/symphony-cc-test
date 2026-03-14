@@ -13,12 +13,14 @@ from app.config import settings
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup and shutdown hooks."""
     # ----- Startup -----
-    # TODO: initialise DB connection pool
+    # DB engine is created eagerly on import; nothing extra needed here.
     # TODO: initialise Redis client
     # TODO: initialise LangGraph agent runtime
     yield
     # ----- Shutdown -----
-    # TODO: close DB pool
+    from app.db.session import engine as db_engine
+
+    await db_engine.dispose()
     # TODO: close Redis connection
 
 
