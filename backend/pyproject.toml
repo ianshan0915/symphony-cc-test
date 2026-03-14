@@ -30,6 +30,9 @@ dependencies = [
     "pydantic[email]>=2.0,<3",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0,<9",
