@@ -43,9 +43,9 @@ output "redis_security_group_id" {
   value       = aws_security_group.redis.id
 }
 
-output "nat_gateway_ip" {
-  description = "Public IP of the NAT Gateway"
-  value       = aws_eip.nat.public_ip
+output "nat_gateway_ips" {
+  description = "Public IPs of the NAT Gateway(s)"
+  value       = aws_eip.nat[*].public_ip
 }
 
 output "availability_zones" {

@@ -37,3 +37,13 @@ output "redis_connection_string" {
   description = "Redis connection string (redis://host:port)"
   value       = "redis://${aws_elasticache_cluster.main.cache_nodes[0].address}:${aws_elasticache_cluster.main.port}"
 }
+
+output "rds_instance_id" {
+  description = "RDS instance identifier (for CloudWatch metric dimensions)"
+  value       = aws_db_instance.main.identifier
+}
+
+output "redis_cluster_id" {
+  description = "ElastiCache cluster ID (for CloudWatch metric dimensions)"
+  value       = aws_elasticache_cluster.main.cluster_id
+}

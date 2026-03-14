@@ -21,6 +21,12 @@ variable "app_port" {
   default     = 8000
 }
 
+variable "enable_ha_nat" {
+  description = "Enable HA NAT Gateways (one per AZ). Set true for production."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Additional tags to apply to all resources"
   type        = map(string)

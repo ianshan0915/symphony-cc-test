@@ -1,6 +1,6 @@
 ###############################################################################
 # Networking Module
-# - VPC (10.0.0.0/16)
+# - VPC with configurable CIDR (default 10.0.0.0/16)
 # - 2 public + 2 private + 2 data subnets across 2 AZs
 # - Internet Gateway, NAT Gateway, route tables
 # - Security groups: alb-sg, ecs-sg, rds-sg, redis-sg
@@ -28,10 +28,11 @@ data "aws_availability_zones" "available" {
 locals {
   azs = slice(data.aws_availability_zones.available.names, 0, 2)
 
-  # Subnet CIDR blocks within 10.0.0.0/16
-  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
-  private_subnets = ["10.0.11.0/24", "10.0.12.0/24"]
-  data_subnets    = ["10.0.21.0/24", "10.0.22.0/24"]
+  # Derive subnet CIDRs from the VPC CIDR so each environment can use its own range.
+  # For a /16 VPC these produce /24 subnets: e.g. 10.2.0.0/16 → 10.2.1.0/24, 10.2.2.0/24, …
+  public_subnets  = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
+  private_subnets = [cidrsubnet(var.vpc_cidr, 8, 11), cidrsubnet(var.vpc_cidr, 8, 12)]
+  data_subnets    = [cidrsubnet(var.vpc_cidr, 8, 21), cidrsubnet(var.vpc_cidr, 8, 22)]
 }
 
 # ------------------------------------------------------------------
@@ -113,27 +114,29 @@ resource "aws_subnet" "data" {
 }
 
 # ------------------------------------------------------------------
-# Elastic IP for NAT Gateway
+# Elastic IP for NAT Gateway(s)
 # ------------------------------------------------------------------
 
 resource "aws_eip" "nat" {
+  count  = var.enable_ha_nat ? 2 : 1
   domain = "vpc"
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-nat-eip"
+    Name = "${var.project}-${var.environment}-nat-eip-${count.index}"
   })
 }
 
 # ------------------------------------------------------------------
-# NAT Gateway (single, in first public subnet)
+# NAT Gateway(s) — HA mode creates one per AZ
 # ------------------------------------------------------------------
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
+  count         = var.enable_ha_nat ? 2 : 1
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-nat-gw"
+    Name = "${var.project}-${var.environment}-nat-gw-${count.index}"
   })
 
   depends_on = [aws_internet_gateway.main]
@@ -165,26 +168,28 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private route table
+# Private route table(s) — HA mode creates one per AZ with its own NAT GW
 resource "aws_route_table" "private" {
+  count  = var.enable_ha_nat ? 2 : 1
   vpc_id = aws_vpc.main.id
 
   tags = merge(var.tags, {
-    Name = "${var.project}-${var.environment}-private-rt"
+    Name = var.enable_ha_nat ? "${var.project}-${var.environment}-private-rt-${count.index}" : "${var.project}-${var.environment}-private-rt"
   })
 }
 
 resource "aws_route" "private_nat" {
-  route_table_id         = aws_route_table.private.id
+  count                  = var.enable_ha_nat ? 2 : 1
+  route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main.id
+  nat_gateway_id         = aws_nat_gateway.main[count.index].id
 }
 
 resource "aws_route_table_association" "private" {
   count = 2
 
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[var.enable_ha_nat ? count.index : 0].id
 }
 
 # Data route table (no internet access)
