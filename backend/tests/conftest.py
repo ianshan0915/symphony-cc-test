@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 
 import pytest
@@ -70,7 +69,7 @@ async def sample_thread(db_session: AsyncSession) -> Thread:
     await db_session.refresh(thread)
 
     # Add sample messages
-    for i, (role, content) in enumerate(
+    for _i, (role, content) in enumerate(
         [
             ("user", "Hello, how are you?"),
             ("assistant", "I'm doing well, thanks!"),

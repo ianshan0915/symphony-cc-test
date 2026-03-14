@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +10,6 @@ import pytest
 # The @tool decorator can replace the module entry in sys.modules.
 # Import the actual module object first, before the decorator runs.
 _ws_mod_name = "app.agents.tools.web_search"
-import app.agents.tools.web_search  # noqa: E402
 
 # Get the real module (may have been replaced in sys.modules by the @tool decorator)
 _ws_module = vars(sys.modules.get("app.agents.tools", {})).get(
@@ -25,7 +23,6 @@ from app.agents.tools.web_search import (  # noqa: E402
     _tavily_search,
     web_search,
 )
-
 
 # ---------------------------------------------------------------------------
 # _format_results

@@ -56,7 +56,7 @@ _redis_client = None
 
 async def _get_redis():
     """Lazily initialise and return the async Redis client."""
-    global _redis_client  # noqa: PLW0603
+    global _redis_client
     if _redis_client is None:
         try:
             from redis.asyncio import Redis
