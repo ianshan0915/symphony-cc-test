@@ -1,0 +1,20 @@
+# Symphony CODEOWNERS
+# Each line is a file pattern followed by one or more owners.
+# Order matters — last matching pattern takes precedence.
+
+# Default owner for everything
+*                       @symphony-cc/engineering
+
+# Backend
+/backend/               @symphony-cc/backend
+
+# Frontend
+/frontend/              @symphony-cc/frontend
+
+# Infrastructure & DevOps
+/infrastructure/        @symphony-cc/devops
+/docker-compose*.yml    @symphony-cc/devops
+/Makefile               @symphony-cc/devops
+
+# CI/CD
+/.github/               @symphony-cc/devops
