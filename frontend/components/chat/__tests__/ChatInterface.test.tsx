@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { ChatInterface } from "../ChatInterface";
@@ -9,9 +9,53 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = jest.fn();
 });
 
+/** Helper: mock response for the /assistants endpoint */
+function mockAssistantsResponse() {
+  return {
+    ok: true,
+    json: async () => ({
+      assistants: [
+        {
+          id: "default",
+          name: "Default Assistant",
+          description: "General-purpose",
+          model: "gpt-4o",
+          tools_enabled: [],
+          is_active: true,
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 50,
+    }),
+  };
+}
+
+/** Route-aware fetch mock: assistants endpoint vs everything else */
+function setupFetchMock(chatHandler?: (url: string, init?: RequestInit) => Promise<unknown>) {
+  (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+    if (url.includes("/assistants")) {
+      return Promise.resolve(mockAssistantsResponse());
+    }
+    if (chatHandler) {
+      return chatHandler(url, init);
+    }
+    // Default: return a minimal empty stream
+    return Promise.resolve({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: jest.fn().mockResolvedValueOnce({ done: true, value: undefined }),
+        }),
+      },
+    });
+  });
+}
+
 // Mock fetch for SSE streaming
 beforeEach(() => {
   global.fetch = jest.fn();
+  setupFetchMock();
 });
 
 afterEach(() => {
@@ -19,34 +63,51 @@ afterEach(() => {
 });
 
 describe("ChatInterface", () => {
-  it("renders the header, message list, and input", () => {
-    render(<ChatInterface />);
+  it("renders the header, message list, and input", async () => {
+    await act(async () => {
+      render(<ChatInterface />);
+    });
     expect(screen.getByText("Symphony Chat")).toBeInTheDocument();
     expect(screen.getByLabelText("Message input")).toBeInTheDocument();
     expect(screen.getByText("Welcome to Symphony")).toBeInTheDocument();
   });
 
-  it("sends a message and displays it", async () => {
-    // Mock fetch to return a minimal SSE stream
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      body: {
-        getReader: () => ({
-          read: jest
-            .fn()
-            .mockResolvedValueOnce({
-              done: false,
-              value: new TextEncoder().encode(
-                'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
-                'event: message_end\ndata: {"thread_id":"t1","content":"Hello!","tool_calls":null}\n\n'
-              ),
-            })
-            .mockResolvedValueOnce({ done: true, value: undefined }),
-        }),
-      },
+  it("renders the assistant selector in the header", async () => {
+    await act(async () => {
+      render(<ChatInterface />);
     });
 
-    render(<ChatInterface />);
+    await waitFor(() => {
+      expect(screen.getByText("Default Assistant")).toBeInTheDocument();
+    });
+  });
+
+  it("sends a message and displays it", async () => {
+    setupFetchMock(async (url) => {
+      if (url.includes("/chat/stream")) {
+        return {
+          ok: true,
+          body: {
+            getReader: () => ({
+              read: jest
+                .fn()
+                .mockResolvedValueOnce({
+                  done: false,
+                  value: new TextEncoder().encode(
+                    'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+                    'event: message_end\ndata: {"thread_id":"t1","content":"Hello!","tool_calls":null}\n\n'
+                  ),
+                })
+                .mockResolvedValueOnce({ done: true, value: undefined }),
+            }),
+          },
+        };
+      }
+    });
+
+    await act(async () => {
+      render(<ChatInterface />);
+    });
 
     const input = screen.getByLabelText("Message input");
     await userEvent.type(input, "Hello AI{Enter}");
@@ -57,9 +118,8 @@ describe("ChatInterface", () => {
   });
 
   it("shows user message immediately when sent", async () => {
-    // Mock fetch to simulate a slow response
-    (global.fetch as jest.Mock).mockImplementation(
-      () =>
+    setupFetchMock(
+      (url) =>
         new Promise((resolve) =>
           setTimeout(
             () =>
@@ -73,12 +133,14 @@ describe("ChatInterface", () => {
                   }),
                 },
               }),
-            100
-          )
-        )
+            100,
+          ),
+        ),
     );
 
-    render(<ChatInterface />);
+    await act(async () => {
+      render(<ChatInterface />);
+    });
 
     const input = screen.getByLabelText("Message input");
     await userEvent.type(input, "Test message{Enter}");
@@ -88,9 +150,13 @@ describe("ChatInterface", () => {
   });
 
   it("displays error message on fetch failure", async () => {
-    (global.fetch as jest.Mock).mockRejectedValue(new Error("Network error"));
+    setupFetchMock(async () => {
+      throw new Error("Network error");
+    });
 
-    render(<ChatInterface />);
+    await act(async () => {
+      render(<ChatInterface />);
+    });
 
     const input = screen.getByLabelText("Message input");
     await userEvent.type(input, "Hello{Enter}");
@@ -100,8 +166,10 @@ describe("ChatInterface", () => {
     });
   });
 
-  it("renders sidebars on the page", () => {
-    render(<ChatInterface />);
+  it("renders sidebars on the page", async () => {
+    await act(async () => {
+      render(<ChatInterface />);
+    });
     expect(screen.getByText("Agent Tasks")).toBeInTheDocument();
     expect(screen.getByText("File Operations")).toBeInTheDocument();
   });
