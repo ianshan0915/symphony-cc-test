@@ -17,11 +17,10 @@ _backend_root = Path(__file__).resolve().parents[2]  # …/backend
 if str(_backend_root) not in sys.path:
     sys.path.insert(0, str(_backend_root))
 
-from app.config import settings  # noqa: E402
-from app.db.session import Base  # noqa: E402
-
 # Import models so Base.metadata is populated
 import app.models  # noqa: E402, F401
+from app.config import settings  # noqa: E402
+from app.db.base import Base  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Alembic Config

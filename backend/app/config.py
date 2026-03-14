@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # --- Database (PostgreSQL + asyncpg) ---
-    database_url: str = "postgresql+asyncpg://symphony:symphony_local@localhost:5432/symphony"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/symphony"
 
     # --- Redis ---
     redis_url: str = "redis://localhost:6379/0"
