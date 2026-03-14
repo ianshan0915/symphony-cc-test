@@ -1,7 +1,8 @@
 """Tests for the health-check endpoint."""
 
-import pytest
 from httpx import ASGITransport, AsyncClient
+
+import pytest
 
 from app.main import app
 

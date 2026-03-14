@@ -8,6 +8,10 @@ const createJestConfig = nextJest({
 const config = {
   coverageProvider: "v8",
   testEnvironment: "jsdom",
+  moduleNameMapper: {
+    "^react-markdown$": "<rootDir>/__mocks__/react-markdown.tsx",
+    "^remark-gfm$": "<rootDir>/__mocks__/remark-gfm.ts",
+  },
 };
 
 module.exports = createJestConfig(config);

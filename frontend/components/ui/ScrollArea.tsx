@@ -4,10 +4,11 @@ import { forwardRef, type ComponentPropsWithoutRef, type ElementRef, type RefObj
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 import { cn } from "@/lib/utils";
 
-export type ScrollAreaProps = ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & {
-  /** Optional ref to the inner scroll viewport element */
+export interface ScrollAreaProps
+  extends ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> {
+  /** Optional ref to the inner viewport element (useful for scroll detection) */
   viewportRef?: RefObject<HTMLDivElement | null>;
-};
+}
 
 /**
  * Scrollable container built on Radix ScrollArea.
