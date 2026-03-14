@@ -1,0 +1,31 @@
+###############################################################################
+# Staging Environment Variables
+###############################################################################
+
+aws_region  = "us-east-1"
+project     = "symphony"
+environment = "staging"
+
+# Networking
+vpc_cidr = "10.1.0.0/16"
+app_port = 8000
+
+# Compute — staging-appropriate sizing (moderate, cost-efficient)
+app_image     = "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/symphony/backend:latest"
+app_cpu       = 512
+app_memory    = 1024
+desired_count = 2
+
+# TLS — set after ACM certificate is provisioned
+certificate_arn = ""
+
+# Data — RDS (staging: small but multi-AZ not required)
+db_instance_class      = "db.t3.small"
+db_allocated_storage   = 20
+db_max_allocated_storage = 100
+
+# Data — Redis
+redis_node_type = "cache.t3.small"
+
+# Monitoring
+log_retention_days = 30
