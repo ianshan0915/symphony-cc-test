@@ -61,6 +61,37 @@ export interface AgentTask {
   completedAt?: string;
 }
 
+/** Assistant configuration (mirrors backend AssistantOut) */
+export interface AssistantConfig {
+  id: string;
+  name: string;
+  description: string | null;
+  model: string;
+  system_prompt: string | null;
+  tools_enabled: string[];
+  metadata: Record<string, unknown>;
+  temperature: number | null;
+  max_tokens: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Status of a sub-agent execution */
+export type SubAgentStatus = "running" | "completed" | "error" | "waiting";
+
+/** A sub-agent spawned by the main agent */
+export interface SubAgent {
+  id: string;
+  name: string;
+  type: string;
+  status: SubAgentStatus;
+  description?: string;
+  progressText?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
 /** A file operation tracked by the agent */
 export interface FileOperation {
   id: string;

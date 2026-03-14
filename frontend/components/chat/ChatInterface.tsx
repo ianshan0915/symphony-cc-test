@@ -4,6 +4,8 @@ import * as React from "react";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { ApprovalDialog } from "./ApprovalDialog";
+import { AssistantSelector } from "./AssistantSelector";
+import { SubAgentProgress } from "./SubAgentProgress";
 import { TasksSidebar } from "@/components/sidebar/TasksSidebar";
 import { FilesSidebar } from "@/components/sidebar/FilesSidebar";
 import { cn } from "@/lib/utils";
@@ -13,7 +15,9 @@ import type {
   ApprovalRequest,
   AgentTask,
   FileOperation,
+  SubAgent,
 } from "@/lib/types";
+import type { AssistantConfig } from "./AssistantSelector";
 
 export interface ChatInterfaceProps {
   /** Additional class names */
@@ -44,6 +48,13 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [fileOps, setFileOps] = React.useState<FileOperation[]>([]);
 
+  // Assistant selector state
+  const [selectedAssistant, setSelectedAssistant] =
+    React.useState<AssistantConfig | null>(null);
+
+  // Sub-agent tracking
+  const [subAgents, setSubAgents] = React.useState<SubAgent[]>([]);
+
   /**
    * Handle sending a new user message via SSE streaming.
    */
@@ -59,10 +70,16 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
 
+      // Clear sub-agents from previous turn
+      setSubAgents([]);
+
       // Build the streaming URL
       const url = new URL(`${config.apiUrl}/chat/stream`);
       if (currentThreadId) {
         url.searchParams.set("thread_id", currentThreadId);
+      }
+      if (selectedAssistant) {
+        url.searchParams.set("assistant_id", selectedAssistant.id);
       }
 
       try {
@@ -132,6 +149,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setPendingApproval,
                     setTasks,
                     setFileOps,
+                    setSubAgents,
                     updateAssistantContent: (newContent: string) => {
                       assistantContent = newContent;
                     },
@@ -167,7 +185,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         setIsLoading(false);
       }
     },
-    [currentThreadId]
+    [currentThreadId, selectedAssistant]
   );
 
   /**
@@ -277,11 +295,18 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       <div className="flex flex-col h-full flex-1 max-w-3xl mx-auto">
         {/* Header */}
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div>
-            <h1 className="text-base font-semibold">Symphony Chat</h1>
-            <p className="text-xs text-muted-foreground">
-              Powered by LangChain Deep Agents
-            </p>
+          <div className="flex items-center gap-3">
+            <div>
+              <h1 className="text-base font-semibold">Symphony Chat</h1>
+              <p className="text-xs text-muted-foreground">
+                Powered by LangChain Deep Agents
+              </p>
+            </div>
+            <AssistantSelector
+              selectedId={selectedAssistant?.id ?? null}
+              onSelect={setSelectedAssistant}
+              disabled={isLoading}
+            />
           </div>
           {pendingApproval && (
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-500 bg-amber-500/10 rounded-full px-2.5 py-1">
@@ -293,6 +318,9 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
         {/* Message list — takes up remaining vertical space */}
         <MessageList messages={messages} isLoading={isLoading} />
+
+        {/* Sub-agent progress (above input, only when agents are active) */}
+        <SubAgentProgress subAgents={subAgents} />
 
         {/* Input area */}
         <ChatInput
@@ -333,6 +361,7 @@ interface SSEHandlers {
   >;
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
+  setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
   updateAssistantContent: (content: string) => void;
   updateToolCalls: (calls: Message["toolCalls"]) => void;
 }
@@ -553,6 +582,53 @@ function processSSEEvent(
         handlers.setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMsgId ? { ...msg, content } : msg
+          )
+        );
+      }
+      break;
+    }
+
+    case "sub_agent_start": {
+      const subAgent: SubAgent = {
+        id: (data.agent_id as string) || `sub-${Date.now()}`,
+        name: (data.agent_name as string) || "Sub-Agent",
+        type: (data.agent_type as string) || "unknown",
+        status: "running",
+        description: data.description as string | undefined,
+        startedAt: new Date().toISOString(),
+      };
+      handlers.setSubAgents((prev) => [...prev, subAgent]);
+      break;
+    }
+
+    case "sub_agent_progress": {
+      const agentId = data.agent_id as string;
+      const progressText = data.progress_text as string;
+      if (agentId) {
+        handlers.setSubAgents((prev) =>
+          prev.map((a) =>
+            a.id === agentId
+              ? { ...a, progressText: progressText ?? a.progressText }
+              : a
+          )
+        );
+      }
+      break;
+    }
+
+    case "sub_agent_end": {
+      const agentId = data.agent_id as string;
+      const status = (data.status as string) === "error" ? "error" : "completed";
+      if (agentId) {
+        handlers.setSubAgents((prev) =>
+          prev.map((a) =>
+            a.id === agentId
+              ? {
+                  ...a,
+                  status: status as SubAgent["status"],
+                  completedAt: new Date().toISOString(),
+                }
+              : a
           )
         );
       }
