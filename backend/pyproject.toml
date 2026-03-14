@@ -29,6 +29,7 @@ dev = [
     "ruff>=0.8,<1",
     "mypy>=1.13,<2",
     "httpx>=0.27,<1",
+    "aiosqlite>=0.20,<1",
 ]
 
 [tool.setuptools.packages.find]
@@ -40,6 +41,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/**" = ["B008"]  # Allow Depends() in function defaults (standard FastAPI pattern)
+"app/models/*.py" = ["UP006", "UP035", "UP045"]  # Allow Optional/Dict/List in ORM model files (py3.9 compat, no __future__ annotations)
 
 [tool.mypy]
 python_version = "3.11"
