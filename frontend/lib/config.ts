@@ -26,6 +26,13 @@ export const config = {
 
   /** Default assistant identifier used when creating new threads. */
   assistantId: requireEnv("NEXT_PUBLIC_ASSISTANT_ID", "general-chat"),
+
+  /** Maximum message length (characters) */
+  maxMessageLength: 10_000,
+
+  /** Auto-scroll threshold in pixels — if user is within this distance
+   *  from the bottom, auto-scroll on new messages */
+  autoScrollThreshold: 150,
 } as const;
 
 export type AppConfig = typeof config;
