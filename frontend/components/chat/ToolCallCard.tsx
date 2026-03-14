@@ -32,6 +32,16 @@ const statusConfig: Record<
     label: "Completed",
   },
   error: { icon: AlertCircle, color: "text-destructive", label: "Error" },
+  awaiting_approval: {
+    icon: AlertCircle,
+    color: "text-amber-500",
+    label: "Awaiting Approval",
+  },
+  rejected: {
+    icon: AlertCircle,
+    color: "text-destructive",
+    label: "Rejected",
+  },
 };
 
 /**
