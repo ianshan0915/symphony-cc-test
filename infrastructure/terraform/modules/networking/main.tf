@@ -1,6 +1,6 @@
 ###############################################################################
 # Networking Module
-# - VPC (10.0.0.0/16)
+# - VPC with configurable CIDR (default 10.0.0.0/16)
 # - 2 public + 2 private + 2 data subnets across 2 AZs
 # - Internet Gateway, NAT Gateway, route tables
 # - Security groups: alb-sg, ecs-sg, rds-sg, redis-sg
@@ -28,10 +28,11 @@ data "aws_availability_zones" "available" {
 locals {
   azs = slice(data.aws_availability_zones.available.names, 0, 2)
 
-  # Subnet CIDR blocks within 10.0.0.0/16
-  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
-  private_subnets = ["10.0.11.0/24", "10.0.12.0/24"]
-  data_subnets    = ["10.0.21.0/24", "10.0.22.0/24"]
+  # Derive subnet CIDRs from the VPC CIDR so each environment can use its own range.
+  # For a /16 VPC these produce /24 subnets: e.g. 10.2.0.0/16 → 10.2.1.0/24, 10.2.2.0/24, …
+  public_subnets  = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
+  private_subnets = [cidrsubnet(var.vpc_cidr, 8, 11), cidrsubnet(var.vpc_cidr, 8, 12)]
+  data_subnets    = [cidrsubnet(var.vpc_cidr, 8, 21), cidrsubnet(var.vpc_cidr, 8, 22)]
 }
 
 # ------------------------------------------------------------------
