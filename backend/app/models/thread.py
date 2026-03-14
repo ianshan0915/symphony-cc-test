@@ -36,7 +36,7 @@ class Thread(Base):
     )
 
     # Relationships
-    messages: Mapped[List["Message"]] = relationship(  # noqa: F821
+    messages: Mapped[List["Message"]] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Message",
         back_populates="thread",
         cascade="all, delete-orphan",

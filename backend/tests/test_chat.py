@@ -58,25 +58,19 @@ class TestChatStreamEndpoint:
     """Integration tests for POST /chat/stream."""
 
     @pytest.mark.asyncio
-    async def test_chat_stream_missing_message_returns_422(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_chat_stream_missing_message_returns_422(self, client: AsyncClient) -> None:
         """An empty body should return 422 Unprocessable Entity."""
         resp = await client.post("/chat/stream", json={})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_chat_stream_empty_message_returns_422(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_chat_stream_empty_message_returns_422(self, client: AsyncClient) -> None:
         """An empty string message should be rejected."""
         resp = await client.post("/chat/stream", json={"message": ""})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_chat_stream_nonexistent_thread_returns_404(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_chat_stream_nonexistent_thread_returns_404(self, client: AsyncClient) -> None:
         """Pointing to a nonexistent thread_id should 404."""
         fake_id = str(uuid.uuid4())
         resp = await client.post(
@@ -101,11 +95,14 @@ class TestChatStreamEndpoint:
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
             yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
             yield SSEEvent(event="token", data={"token": "Hi"})
-            yield SSEEvent(event="message_end", data={
-                "thread_id": kwargs["thread_id"],
-                "content": "Hi",
-                "tool_calls": None,
-            })
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "Hi",
+                    "tool_calls": None,
+                },
+            )
 
         from app.services.agent_service import agent_service
 
@@ -137,13 +134,17 @@ class TestChatStreamEndpoint:
 
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
             yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
-            yield SSEEvent(event="message_end", data={
-                "thread_id": kwargs["thread_id"],
-                "content": "Hello!",
-                "tool_calls": None,
-            })
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "Hello!",
+                    "tool_calls": None,
+                },
+            )
 
         from app.services.agent_service import agent_service
+
         original_stream = agent_service.stream_response
         agent_service.stream_response = mock_stream  # type: ignore[assignment]
         try:

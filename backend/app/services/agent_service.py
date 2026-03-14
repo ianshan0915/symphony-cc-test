@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # SSE event types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SSEEvent:
     """A Server-Sent Event to be streamed to the client."""
@@ -78,7 +79,7 @@ class AgentService:
 
         On error an ``error`` event is yielded and the stream terminates.
         """
-        config = {"configurable": {"thread_id": thread_id}}
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}  # type: ignore[assignment]
 
         input_messages = [HumanMessage(content=user_message)]
 
@@ -94,7 +95,7 @@ class AgentService:
         try:
             async for event in self.agent.astream_events(
                 {"messages": input_messages},
-                config=config,
+                config=config,  # type: ignore[arg-type]
                 version="v2",
             ):
                 kind = event.get("event", "")
@@ -114,7 +115,7 @@ class AgentService:
                 # Tool invocations
                 elif kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
-                    tool_input = event.get("data", {}).get("input", {})
+                    tool_input: Any = event.get("data", {}).get("input", {})
                     run_id = event.get("run_id", "")
                     tool_call_info = {
                         "tool_name": tool_name,

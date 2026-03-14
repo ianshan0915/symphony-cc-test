@@ -6,9 +6,7 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.message import Message
 from app.models.thread import Thread, ThreadCreate, ThreadUpdate
 from app.services.thread_service import ThreadService
 
@@ -161,7 +159,8 @@ class TestThreadServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_deleted_thread_returns_none(
-        self, thread_service: ThreadService,
+        self,
+        thread_service: ThreadService,
     ) -> None:
         thread = await thread_service.create(ThreadCreate(title="Will delete"))
         await thread_service.delete(thread.id)

@@ -41,6 +41,7 @@ class TestSystemPrompt:
 
     def test_prompt_module_exports(self) -> None:
         from app.agents.prompts import GENERAL_SYSTEM_PROMPT as EXPORTED_PROMPT
+
         assert EXPORTED_PROMPT is GENERAL_SYSTEM_PROMPT
 
 
@@ -86,20 +87,23 @@ class TestAgentFactory:
 
     def test_get_chat_model_openai_import_error(self) -> None:
         """If langchain-openai is not installed, ImportError is raised."""
-        with patch.dict("sys.modules", {"langchain_openai": None}), pytest.raises(
-            ImportError, match="langchain-openai"
+        with (
+            patch.dict("sys.modules", {"langchain_openai": None}),
+            pytest.raises(ImportError, match="langchain-openai"),
         ):
             _get_chat_model("gpt-4o")
 
     def test_get_chat_model_anthropic_import_error(self) -> None:
         """If langchain-anthropic is not installed, ImportError is raised."""
-        with patch.dict("sys.modules", {"langchain_anthropic": None}), pytest.raises(
-            ImportError, match="langchain-anthropic"
+        with (
+            patch.dict("sys.modules", {"langchain_anthropic": None}),
+            pytest.raises(ImportError, match="langchain-anthropic"),
         ):
             _get_chat_model("claude-3-sonnet")
 
     def test_factory_module_exports(self) -> None:
         from app.agents import create_deep_agent as exported
+
         assert callable(exported)
 
 
@@ -305,6 +309,7 @@ class TestCustomTypes:
 
         assert isinstance(thread.id, uuid.UUID)
         from sqlalchemy import select
+
         result = await db_session.execute(select(Thread).where(Thread.id == thread.id))
         fetched = result.scalar_one()
         assert fetched.id == thread.id

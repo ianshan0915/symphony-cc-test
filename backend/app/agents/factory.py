@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -14,9 +15,29 @@ from langgraph.prebuilt import create_react_agent
 
 from app.agents.middleware import get_memory_store
 from app.agents.prompts.general import GENERAL_SYSTEM_PROMPT
+from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_langsmith() -> None:
+    """Set LangSmith environment variables from application settings.
+
+    LangChain reads tracing configuration from environment variables.
+    This function bridges our Pydantic settings to those env vars so
+    tracing activates automatically when configured.
+    """
+    if settings.langchain_tracing_v2 and settings.langchain_api_key:
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
+        os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
+        logger.info(
+            "LangSmith tracing enabled for project '%s'",
+            settings.langchain_project,
+        )
+    else:
+        logger.debug("LangSmith tracing not configured — skipping")
 
 
 def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatModel:
@@ -36,8 +57,8 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
                 "Install it with: pip install langchain-anthropic"
             ) from exc
         return ChatAnthropic(
-            model=model,
-            anthropic_api_key=settings.anthropic_api_key or None,
+            model=model,  # type: ignore[call-arg]
+            anthropic_api_key=settings.anthropic_api_key or None,  # type: ignore[call-arg]
             streaming=True,
             **kwargs,
         )
@@ -52,7 +73,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         ) from exc
     return ChatOpenAI(
         model=model,
-        api_key=settings.openai_api_key or None,
+        api_key=settings.openai_api_key or None,  # type: ignore[arg-type]
         streaming=True,
         **kwargs,
     )
@@ -76,7 +97,7 @@ def create_deep_agent(
         Defaults to ``settings.default_model``.
     tools:
         Sequence of LangChain tools available to the agent.
-        Defaults to an empty list (pure conversational agent).
+        Defaults to all registered tools in ``TOOL_REGISTRY``.
     system_prompt:
         System prompt for the agent. Defaults to the general-purpose prompt.
     checkpointer:
@@ -93,9 +114,18 @@ def create_deep_agent(
     CompiledStateGraph
         A compiled LangGraph agent ready for streaming invocation.
     """
+    # Ensure LangSmith tracing env vars are configured
+    _configure_langsmith()
+
     llm = _get_chat_model(model_name, **(model_kwargs or {}))
     prompt = system_prompt or GENERAL_SYSTEM_PROMPT
-    agent_tools: list[BaseTool] = list(tools) if tools else []
+
+    # Use provided tools, or fall back to all registered tools
+    if tools is not None:
+        agent_tools: list[BaseTool] = list(tools)
+    else:
+        agent_tools = list(TOOL_REGISTRY.values())
+
     saver = checkpointer if checkpointer is not None else MemorySaver()
     memory_store = store if store is not None else get_memory_store()
 
