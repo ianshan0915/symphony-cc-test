@@ -16,6 +16,7 @@ symphony/
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) (with Compose v2)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
 - GNU Make
 
 ## Quick Start
@@ -23,6 +24,12 @@ symphony/
 ```bash
 # Start local development services (PostgreSQL + Redis)
 make up
+
+# Install backend dependencies
+make backend-install
+
+# Run the backend dev server
+make backend-run
 
 # Check service status
 make ps
@@ -52,9 +59,13 @@ Run `make help` to see all available targets:
 | `down`      | Stop local dev services                  |
 | `ps`        | Show running service status              |
 | `logs`      | Tail service logs                        |
+| `backend-install` | Install backend dependencies with uv |
+| `backend-lint`    | Run backend linters (ruff + mypy)    |
+| `backend-test`    | Run backend tests                    |
+| `backend-run`     | Run backend dev server               |
 | `build`     | Build all services _(stub)_              |
-| `test`      | Run all tests _(stub)_                   |
-| `lint`      | Run linters _(stub)_                     |
+| `test`      | Run all tests                            |
+| `lint`      | Run linters                              |
 | `test-up`   | Start CI test services (ephemeral)       |
 | `test-down` | Stop CI test services                    |
 | `clean`     | Remove volumes and stopped containers    |

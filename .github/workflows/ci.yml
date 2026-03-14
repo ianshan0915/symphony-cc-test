@@ -16,17 +16,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-      - run: pip install ruff mypy
       - name: Ruff check
-        run: ruff check backend/
+        run: uv run --project backend ruff check backend/
       - name: Ruff format check
-        run: ruff format --check backend/
+        run: uv run --project backend ruff format --check backend/
       - name: Mypy type check
-        run: mypy backend/app/ --ignore-missing-imports
+        run: uv run --project backend mypy backend/app/ --ignore-missing-imports
 
   backend-test:
     name: Backend Test
@@ -54,14 +56,17 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
       - name: Install dependencies
-        run: pip install -e "backend/[dev]"
+        run: uv sync --project backend
       - name: Run tests with coverage
-        run: pytest backend/tests/ -v --cov=backend/app --cov-report=xml
+        run: uv run --project backend pytest backend/tests/ -v --cov=backend/app --cov-report=xml
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
           REDIS_URL: redis://localhost:6379

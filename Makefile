@@ -1,4 +1,4 @@
-.PHONY: help up down build test lint clean ps logs
+.PHONY: help up down build test lint clean ps logs backend-install backend-lint backend-test backend-run
 
 COMPOSE := docker compose
 COMPOSE_TEST := docker compose -f docker-compose.test.yml
@@ -27,17 +27,31 @@ logs: ## Tail service logs (usage: make logs or make logs s=postgres)
 	$(COMPOSE) logs -f $(s)
 
 # ---------------------------------------------------------------------------
-# Build / Test / Lint (stubs — filled in by later tickets)
+# Backend (uv)
+# ---------------------------------------------------------------------------
+
+backend-install: ## Install backend dependencies with uv
+	cd backend && uv sync
+
+backend-lint: ## Run backend linters (ruff + mypy)
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app/ --ignore-missing-imports
+
+backend-test: ## Run backend tests
+	cd backend && uv run pytest tests/ -v
+
+backend-run: ## Run backend dev server
+	cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# ---------------------------------------------------------------------------
+# Aggregate targets
 # ---------------------------------------------------------------------------
 
 build: ## Build all services
-	@echo "build: not yet implemented — see backend/ and frontend/ tickets"
+	@echo "build: not yet implemented — see frontend/ tickets"
 
-test: ## Run all tests
-	@echo "test: not yet implemented — see backend/ and frontend/ tickets"
+test: backend-test ## Run all tests
 
-lint: ## Run linters
-	@echo "lint: not yet implemented — see backend/ and frontend/ tickets"
+lint: backend-lint ## Run linters
 
 # ---------------------------------------------------------------------------
 # CI test services
