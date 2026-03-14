@@ -1,9 +1,17 @@
-"""Agent middleware — LangGraph Memory Store integration.
+"""Agent middleware — LangGraph Memory Store & Checkpointer integration.
 
-Provides a shared memory store backed by PostgreSQL so that agents can
-retain context across conversation turns within a thread.  The memory
-store is injected into the agent graph via the ``store`` parameter of
-``create_react_agent``.
+Provides shared, production-grade persistence backends for LangGraph agents:
+
+* **Store** — ``AsyncPostgresStore`` for cross-turn memory (namespace-scoped
+  key-value data that survives process restarts).  Falls back to
+  ``InMemoryStore`` when the Postgres package is unavailable or setup fails.
+
+* **Checkpointer** — ``AsyncPostgresSaver`` for checkpoint persistence so
+  thread state is durable across restarts.  Falls back to ``MemorySaver``.
+
+Both backends are initialised once at application startup via
+:func:`setup_persistent_backends` and torn down via
+:func:`teardown_persistent_backends`.
 """
 
 from __future__ import annotations
@@ -11,40 +19,145 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Memory store singleton
+# Singleton state
 # ---------------------------------------------------------------------------
 
-_memory_store: InMemoryStore | None = None
+_memory_store: Any | None = None
+_checkpointer: Any | None = None
+
+# Track whether we are using persistent (Postgres) backends
+_using_persistent_store: bool = False
+_using_persistent_checkpointer: bool = False
 
 
-def get_memory_store() -> InMemoryStore:
-    """Return (and lazily create) the shared in-memory store.
+# ---------------------------------------------------------------------------
+# Async setup / teardown (called from app lifespan)
+# ---------------------------------------------------------------------------
 
-    LangGraph's ``InMemoryStore`` provides a namespace-based key-value
-    store that agents can read/write within tool calls or node functions.
-    Data persists for the lifetime of the process.
 
-    In a future iteration this will be swapped for a PostgreSQL-backed
-    store (e.g. ``AsyncPostgresStore``) so that memory survives restarts.
-    The interface is identical, so no agent code changes will be needed.
+async def setup_persistent_backends() -> None:
+    """Initialise PostgreSQL-backed store and checkpointer.
+
+    Called once during application startup.  On import or connection
+    failure the function silently falls back to in-memory backends so
+    the application can still run (useful in CI / local-dev without PG).
+    """
+    global _memory_store, _checkpointer
+    global _using_persistent_store, _using_persistent_checkpointer
+
+    conn_string = settings.database_url_psycopg
+
+    # --- Store ---
+    try:
+        from langgraph.store.postgres import AsyncPostgresStore
+
+        store = AsyncPostgresStore.from_conn_string(conn_string)
+        # __aenter__ opens the connection pool
+        _memory_store = await store.__aenter__()
+        await _memory_store.setup()
+        _using_persistent_store = True
+        logger.info("Persistent AsyncPostgresStore initialised")
+    except Exception:
+        logger.warning(
+            "Failed to initialise AsyncPostgresStore — falling back to InMemoryStore",
+            exc_info=True,
+        )
+        _memory_store = InMemoryStore()
+        _using_persistent_store = False
+
+    # --- Checkpointer ---
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        saver = AsyncPostgresSaver.from_conn_string(conn_string)
+        _checkpointer = await saver.__aenter__()
+        await _checkpointer.setup()
+        _using_persistent_checkpointer = True
+        logger.info("Persistent AsyncPostgresSaver initialised")
+    except Exception:
+        logger.warning(
+            "Failed to initialise AsyncPostgresSaver — falling back to MemorySaver",
+            exc_info=True,
+        )
+        _checkpointer = MemorySaver()
+        _using_persistent_checkpointer = False
+
+
+async def teardown_persistent_backends() -> None:
+    """Gracefully close persistent backends (called at shutdown)."""
+    global _memory_store, _checkpointer
+
+    if _using_persistent_store and _memory_store is not None:
+        try:
+            await _memory_store.__aexit__(None, None, None)
+            logger.info("AsyncPostgresStore closed")
+        except Exception:
+            logger.warning("Error closing AsyncPostgresStore", exc_info=True)
+
+    if _using_persistent_checkpointer and _checkpointer is not None:
+        try:
+            await _checkpointer.__aexit__(None, None, None)
+            logger.info("AsyncPostgresSaver closed")
+        except Exception:
+            logger.warning("Error closing AsyncPostgresSaver", exc_info=True)
+
+    _memory_store = None
+    _checkpointer = None
+
+
+# ---------------------------------------------------------------------------
+# Accessors (used by factory / agent service)
+# ---------------------------------------------------------------------------
+
+
+def get_memory_store() -> Any:
+    """Return the shared memory store (Postgres or in-memory).
+
+    Lazily creates an ``InMemoryStore`` if persistent backends have not
+    been set up yet (e.g. during unit tests).
     """
     global _memory_store
     if _memory_store is None:
-        logger.info("Initializing LangGraph InMemoryStore")
+        logger.info("Initialising fallback InMemoryStore (no persistent backend)")
         _memory_store = InMemoryStore()
     return _memory_store
 
 
+def get_checkpointer() -> Any:
+    """Return the shared checkpointer (Postgres or in-memory).
+
+    Lazily creates a ``MemorySaver`` if persistent backends have not been
+    set up yet (e.g. during unit tests).
+    """
+    global _checkpointer
+    if _checkpointer is None:
+        logger.info("Initialising fallback MemorySaver (no persistent backend)")
+        _checkpointer = MemorySaver()
+    return _checkpointer
+
+
 def reset_memory_store() -> None:
     """Reset the memory store (primarily for testing)."""
-    global _memory_store
+    global _memory_store, _using_persistent_store
     _memory_store = None
+    _using_persistent_store = False
     logger.info("Memory store reset")
+
+
+def reset_checkpointer() -> None:
+    """Reset the checkpointer (primarily for testing)."""
+    global _checkpointer, _using_persistent_checkpointer
+    _checkpointer = None
+    _using_persistent_checkpointer = False
+    logger.info("Checkpointer reset")
 
 
 # ---------------------------------------------------------------------------
