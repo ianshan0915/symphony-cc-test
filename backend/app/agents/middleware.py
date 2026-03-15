@@ -1,6 +1,8 @@
-"""Agent middleware — LangGraph Memory Store & Checkpointer integration.
+"""Agent middleware — persistence backends for deep agents.
 
-Provides shared, production-grade persistence backends for LangGraph agents:
+Provides shared, production-grade persistence backends consumed by
+``deepagents.create_deep_agent()`` via its ``checkpointer`` and ``store``
+parameters:
 
 * **Store** — ``AsyncPostgresStore`` for cross-turn memory (namespace-scoped
   key-value data that survives process restarts).  Falls back to

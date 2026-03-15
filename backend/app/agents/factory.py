@@ -1,4 +1,4 @@
-"""Deep Agent factory — creates configured LangGraph ReAct agents.
+"""Deep Agent factory — creates configured deep agents via the ``deepagents`` package.
 
 Supports specialized agent types (researcher, coder, writer) via
 ``assistant_type`` parameter, with prompt caching for repeat invocations.
@@ -13,10 +13,10 @@ from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
 
+from deepagents import create_deep_agent as _deepagents_create
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.prebuilt import create_react_agent
 
 from app.agents.middleware import get_checkpointer, get_memory_store
 from app.agents.prompts import (
@@ -200,7 +200,7 @@ def create_deep_agent(
     store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
-    """Create a LangGraph ReAct agent with the given configuration.
+    """Create a deep agent via the ``deepagents`` package.
 
     Parameters
     ----------
@@ -231,7 +231,7 @@ def create_deep_agent(
     Returns
     -------
     CompiledStateGraph
-        A compiled LangGraph agent ready for streaming invocation.
+        A compiled deep agent ready for streaming invocation.
     """
     # Ensure LangSmith tracing env vars are configured
     _configure_langsmith()
@@ -261,10 +261,10 @@ def create_deep_agent(
         type(memory_store).__name__,
     )
 
-    agent = create_react_agent(
+    agent = _deepagents_create(
         model=llm,
         tools=agent_tools,
-        prompt=prompt,
+        system_prompt=prompt,
         checkpointer=saver,
         store=memory_store,
     )

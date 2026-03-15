@@ -53,37 +53,53 @@ class TestSystemPrompt:
 class TestAgentFactory:
     """Tests for create_deep_agent factory function."""
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_agent_returns_compiled_graph(self, mock_model: MagicMock) -> None:
-        """Factory should return a compiled LangGraph agent."""
+    def test_create_agent_returns_compiled_graph(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        """Factory should return a compiled deep agent."""
         mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
         mock_model.return_value = mock_llm
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = MagicMock()
+        mock_agent.astream_events = MagicMock()
+        mock_da_create.return_value = mock_agent
 
         agent = create_deep_agent()
         assert agent is not None
-        # Should be a CompiledGraph (has invoke/ainvoke/astream_events)
         assert hasattr(agent, "ainvoke")
         assert hasattr(agent, "astream_events")
+        mock_da_create.assert_called_once()
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_agent_with_custom_prompt(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_create_agent_with_custom_prompt(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         agent = create_deep_agent(system_prompt="You are a test bot.")
         assert agent is not None
+        # Verify system_prompt was passed through to deepagents
+        call_kwargs = mock_da_create.call_args
+        assert call_kwargs.kwargs["system_prompt"] == "You are a test bot."
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_agent_with_custom_checkpointer(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_create_agent_with_custom_checkpointer(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         custom_saver = MagicMock()
         agent = create_deep_agent(checkpointer=custom_saver)
         assert agent is not None
+        # Verify checkpointer was passed through to deepagents
+        call_kwargs = mock_da_create.call_args
+        assert call_kwargs.kwargs["checkpointer"] is custom_saver
 
     def test_get_chat_model_openai_import_error(self) -> None:
         """If langchain-openai is not installed, ImportError is raised."""
