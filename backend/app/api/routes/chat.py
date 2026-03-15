@@ -11,7 +11,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db_session, rate_limiter, rate_limiter_strict, set_request_user_id
+from app.api.deps import (
+    get_db_session,
+    rate_limiter,
+    rate_limiter_strict,
+    set_request_user_id,
+)
 from app.models.message import Message
 from app.models.thread import Thread
 from app.services.agent_service import SSEEvent, agent_service
