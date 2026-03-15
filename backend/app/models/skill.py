@@ -121,7 +121,7 @@ class SkillOut(BaseModel):
     name: str
     description: str
     instructions: str
-    metadata: Dict[str, Any] = Field(default_factory=dict, alias="metadata_")
+    metadata: Dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
     is_active: bool
     created_at: datetime
     updated_at: datetime
