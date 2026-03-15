@@ -167,7 +167,9 @@ class TestMe:
 
 class TestRefresh:
     async def test_refresh_returns_new_token(
-        self, auth_client: AsyncClient, db_session: AsyncSession,
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
     ):
         user = User(
             email="refresh@example.com",
