@@ -156,15 +156,19 @@ async def seed_default_assistants(session: AsyncSession) -> None:
     for entry in DEFAULT_ASSISTANTS:
         agent_type = str(entry["type"])
         registry_entry = AGENT_PROMPT_REGISTRY.get(agent_type, {})
-        system_prompt: str | None = registry_entry.get("system_prompt")  # type: ignore[assignment]
-        tools: list[str] = registry_entry.get("tools") or []  # type: ignore[assignment]
+        system_prompt = registry_entry.get("system_prompt")
+        raw_tools = registry_entry.get("tools")
+        tools: list[str] = list(raw_tools) if raw_tools else []
 
         data = AssistantCreate(
             name=str(entry["name"]),
             description=str(entry["description"]),
-            system_prompt=system_prompt,
+            model="gpt-4o",
+            system_prompt=str(system_prompt) if system_prompt else None,
             tools_enabled=tools,
             metadata={"agent_type": agent_type, "is_default": True},
+            temperature=None,
+            max_tokens=None,
         )
         assistant = await svc.create(data)
         logger.info("Seeded assistant %r (id=%s)", assistant.name, assistant.id)
