@@ -8,6 +8,7 @@ import { AssistantSelector } from "./AssistantSelector";
 import { SubAgentProgress } from "./SubAgentProgress";
 import { TasksSidebar } from "@/components/sidebar/TasksSidebar";
 import { FilesSidebar } from "@/components/sidebar/FilesSidebar";
+import { ConversationSidebar } from "@/components/sidebar/ConversationSidebar";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
@@ -18,6 +19,7 @@ import type {
   AgentTask,
   FileOperation,
   SubAgent,
+  ThreadDetail,
 } from "@/lib/types";
 import type { AssistantConfig } from "./AssistantSelector";
 
@@ -34,11 +36,27 @@ export interface ChatInterfaceProps {
  *
  * Layout: TasksSidebar | Chat | FilesSidebar
  */
+const THREAD_ID_KEY = "symphony_current_thread_id";
+
+function getPersistedThreadId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(THREAD_ID_KEY);
+}
+
+function persistThreadId(threadId: string | null): void {
+  if (typeof window === "undefined") return;
+  if (threadId) {
+    localStorage.setItem(THREAD_ID_KEY, threadId);
+  } else {
+    localStorage.removeItem(THREAD_ID_KEY);
+  }
+}
+
 export function ChatInterface({ className }: ChatInterfaceProps) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [currentThreadId, setCurrentThreadId] = React.useState<string | null>(
-    null
+    getPersistedThreadId
   );
 
   // Approval state
@@ -56,6 +74,79 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sub-agent tracking
   const [subAgents, setSubAgents] = React.useState<SubAgent[]>([]);
+
+  // Persist currentThreadId to localStorage whenever it changes
+  React.useEffect(() => {
+    persistThreadId(currentThreadId);
+  }, [currentThreadId]);
+
+  // Load messages for the current thread on mount or when switching threads
+  const loadThreadMessages = React.useCallback(
+    async (threadId: string) => {
+      try {
+        const response = await apiFetch(
+          `${config.apiUrl}/threads/${threadId}`
+        );
+        if (!response.ok) {
+          // Thread may have been deleted — clear persisted ID
+          if (response.status === 404) {
+            setCurrentThreadId(null);
+            setMessages([]);
+            return;
+          }
+          throw new Error(`Failed to load thread: ${response.statusText}`);
+        }
+        const thread: ThreadDetail = await response.json();
+        const loadedMessages: Message[] = thread.messages.map((m) => ({
+          id: m.id,
+          role: m.role as Message["role"],
+          content: m.content,
+          toolCalls: m.tool_calls
+            ? Array.isArray(m.tool_calls)
+              ? m.tool_calls
+              : []
+            : undefined,
+          createdAt: m.created_at,
+        }));
+        setMessages(loadedMessages);
+      } catch (err) {
+        console.error("Failed to load thread messages:", err);
+        // Don't clear thread ID on network errors — user can retry
+      }
+    },
+    []
+  );
+
+  React.useEffect(() => {
+    if (currentThreadId) {
+      loadThreadMessages(currentThreadId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentThreadId]);
+
+  // Handlers for ConversationSidebar
+  const handleSelectThread = React.useCallback(
+    (threadId: string) => {
+      if (threadId === currentThreadId) return;
+      // Reset state for new thread
+      setMessages([]);
+      setTasks([]);
+      setFileOps([]);
+      setSubAgents([]);
+      setPendingApproval(null);
+      setCurrentThreadId(threadId);
+    },
+    [currentThreadId]
+  );
+
+  const handleNewConversation = React.useCallback(() => {
+    setCurrentThreadId(null);
+    setMessages([]);
+    setTasks([]);
+    setFileOps([]);
+    setSubAgents([]);
+    setPendingApproval(null);
+  }, []);
 
   /**
    * Handle sending a new user message via SSE streaming.
@@ -290,6 +381,14 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     <div
       className={cn("flex h-full w-full bg-background", className)}
     >
+      {/* Conversation history sidebar */}
+      <ConversationSidebar
+        currentThreadId={currentThreadId}
+        onSelectThread={handleSelectThread}
+        onNewConversation={handleNewConversation}
+        className="hidden lg:flex"
+      />
+
       {/* Tasks sidebar */}
       <TasksSidebar tasks={tasks} className="hidden lg:flex" />
 
