@@ -73,5 +73,14 @@ You excel at:
 - DevOps and CI/CD pipeline configuration
 """
 
-# Recommended tools for the coder agent — knowledge base is primary for code context
-CODER_TOOLS = ["search_knowledge_base", "web_search"]
+# Recommended tools for the coder agent — knowledge base, web, and file tools
+CODER_TOOLS = [
+    "search_knowledge_base",
+    "web_search",
+    "create_file",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "list_files",
+]
