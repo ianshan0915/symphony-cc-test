@@ -51,7 +51,8 @@ async def _get_embedding(query: str) -> list[float]:
             )
             response.raise_for_status()
             data = response.json()
-            return data["data"][0]["embedding"]
+            embedding: list[float] = data["data"][0]["embedding"]
+            return embedding
     except Exception:
         logger.exception("Failed to generate embedding for query: %s", query[:100])
         raise

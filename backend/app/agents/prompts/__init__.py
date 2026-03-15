@@ -7,6 +7,8 @@ Use ``get_prompt_for_agent_type`` to resolve a prompt by assistant type, or
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.agents.prompts.coder import CODER_SYSTEM_PROMPT, CODER_TOOLS
 from app.agents.prompts.general import GENERAL_SYSTEM_PROMPT
 from app.agents.prompts.researcher import RESEARCHER_SYSTEM_PROMPT, RESEARCHER_TOOLS
@@ -16,7 +18,7 @@ from app.agents.prompts.writer import WRITER_SYSTEM_PROMPT, WRITER_TOOLS
 # Agent type registry — maps assistant type names to (prompt, tools) pairs
 # ---------------------------------------------------------------------------
 
-AGENT_PROMPT_REGISTRY: dict[str, dict] = {
+AGENT_PROMPT_REGISTRY: dict[str, dict[str, Any]] = {
     "general": {
         "system_prompt": GENERAL_SYSTEM_PROMPT,
         "tools": None,  # None means "use all available tools"
@@ -47,7 +49,7 @@ def get_prompt_for_agent_type(agent_type: str) -> str:
     entry = AGENT_PROMPT_REGISTRY.get(agent_type)
     if entry is None:
         return GENERAL_SYSTEM_PROMPT
-    return entry["system_prompt"]
+    return str(entry["system_prompt"])
 
 
 def get_tools_for_agent_type(agent_type: str) -> list[str] | None:
@@ -58,7 +60,8 @@ def get_tools_for_agent_type(agent_type: str) -> list[str] | None:
     entry = AGENT_PROMPT_REGISTRY.get(agent_type)
     if entry is None:
         return None
-    return entry["tools"]
+    tools: list[str] | None = entry["tools"]
+    return tools
 
 
 __all__ = [

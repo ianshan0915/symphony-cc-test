@@ -3,10 +3,11 @@
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timezone
+from typing import Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,7 +117,10 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next: ...) -> Response:
+async def request_id_middleware(
+    request: Request,
+    call_next: Callable[[Request], Coroutine[Any, Any, Response]],
+) -> Response:
     """Inject a unique request ID into every request/response cycle.
 
     * Reads ``X-Request-ID`` from the incoming headers (to support

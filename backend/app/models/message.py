@@ -30,10 +30,10 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_calls: Mapped[Optional[dict]] = mapped_column(  # type: ignore[assignment]
+    tool_calls: Mapped[Optional[dict]] = mapped_column(  # type: ignore[type-arg]
         JSONType(), nullable=True
     )
-    metadata_: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+    metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
     created_at: Mapped[datetime] = mapped_column(

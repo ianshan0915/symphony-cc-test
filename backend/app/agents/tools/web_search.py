@@ -70,7 +70,8 @@ async def _tavily_search(
             f"Tavily API returned status {response.status_code}: {response.text}"
         )
 
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result
 
 
 def _format_results(raw: dict[str, Any]) -> str:
