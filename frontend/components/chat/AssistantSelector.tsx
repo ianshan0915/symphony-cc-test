@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
+import { apiFetch } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,7 +81,7 @@ export function AssistantSelector({
       setError(null);
 
       try {
-        const res = await fetch(`${config.apiUrl}/assistants?limit=50`);
+        const res = await apiFetch(`/assistants?limit=50`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!cancelled) {
