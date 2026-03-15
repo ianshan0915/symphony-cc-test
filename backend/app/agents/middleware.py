@@ -78,6 +78,7 @@ async def setup_persistent_backends() -> None:
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from psycopg import AsyncConnection
+        from psycopg.rows import dict_row
         from psycopg_pool import AsyncConnectionPool
 
         _checkpointer_pool = AsyncConnectionPool(
@@ -92,7 +93,9 @@ async def setup_persistent_backends() -> None:
         # Run setup() with a dedicated autocommit connection because the
         # checkpoint migration contains CREATE INDEX CONCURRENTLY which
         # PostgreSQL forbids inside a transaction block.  See SYM-57.
-        async with await AsyncConnection.connect(conn_string, autocommit=True) as setup_conn:
+        async with await AsyncConnection.connect(
+            conn_string, autocommit=True, row_factory=dict_row
+        ) as setup_conn:
             setup_saver = AsyncPostgresSaver(setup_conn)
             await setup_saver.setup()
         _using_persistent_checkpointer = True
