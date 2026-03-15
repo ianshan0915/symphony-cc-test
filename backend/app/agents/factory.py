@@ -18,9 +18,8 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import create_react_agent
 
-from app.agents.middleware import get_memory_store
+from app.agents.middleware import get_checkpointer, get_memory_store
 from app.agents.prompts import (
-    AGENT_PROMPT_REGISTRY,
     GENERAL_SYSTEM_PROMPT,
     get_prompt_for_agent_type,
     get_tools_for_agent_type,

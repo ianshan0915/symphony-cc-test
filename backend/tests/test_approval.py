@@ -101,9 +101,7 @@ class TestAgentServiceApproval:
         )
         svc._pending_approvals["thread-1"] = pending
 
-        result = await svc.resolve_approval(
-            "thread-1", approved=False, reason="Not safe"
-        )
+        result = await svc.resolve_approval("thread-1", approved=False, reason="Not safe")
         assert result is True
         assert pending.approved is False
         assert pending.reject_reason == "Not safe"
@@ -198,9 +196,7 @@ class TestApprovalEndpoint:
     """Integration tests for POST /chat/approval."""
 
     @pytest.mark.asyncio
-    async def test_approval_no_pending_returns_404(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_approval_no_pending_returns_404(self, client: AsyncClient) -> None:
         """Submitting a decision when no approval is pending should 404."""
         resp = await client.post(
             "/chat/approval",
@@ -212,9 +208,7 @@ class TestApprovalEndpoint:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_approval_invalid_decision_returns_422(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_approval_invalid_decision_returns_422(self, client: AsyncClient) -> None:
         """An invalid decision value should return 422."""
         resp = await client.post(
             "/chat/approval",
@@ -226,9 +220,7 @@ class TestApprovalEndpoint:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_approval_approve_resolves(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_approval_approve_resolves(self, client: AsyncClient) -> None:
         """Approving a pending approval should succeed."""
         from app.services.agent_service import agent_service
 
@@ -259,9 +251,7 @@ class TestApprovalEndpoint:
             agent_service._pending_approvals.pop("test-thread", None)
 
     @pytest.mark.asyncio
-    async def test_approval_reject_with_reason(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_approval_reject_with_reason(self, client: AsyncClient) -> None:
         """Rejecting with a reason should store the reason."""
         from app.services.agent_service import agent_service
 
@@ -302,18 +292,14 @@ class TestGetPendingApproval:
     """Integration tests for GET /chat/approval/{thread_id}."""
 
     @pytest.mark.asyncio
-    async def test_no_pending_returns_has_pending_false(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_no_pending_returns_has_pending_false(self, client: AsyncClient) -> None:
         resp = await client.get("/chat/approval/nonexistent-thread")
         assert resp.status_code == 200
         data = resp.json()
         assert data["has_pending"] is False
 
     @pytest.mark.asyncio
-    async def test_pending_returns_approval_details(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_pending_returns_approval_details(self, client: AsyncClient) -> None:
         from app.services.agent_service import agent_service
 
         pending = PendingApproval(

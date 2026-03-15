@@ -265,9 +265,7 @@ class TestThreadMetadataForAgents:
     """Tests for thread metadata patterns used by agent interactions."""
 
     @pytest.mark.asyncio
-    async def test_thread_metadata_stores_agent_config(
-        self, thread_service: ThreadService
-    ) -> None:
+    async def test_thread_metadata_stores_agent_config(self, thread_service: ThreadService) -> None:
         """Thread metadata can store agent configuration."""
         data = ThreadCreate(
             title="Agent Chat",

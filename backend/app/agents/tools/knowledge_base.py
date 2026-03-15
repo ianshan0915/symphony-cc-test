@@ -166,10 +166,7 @@ async def search_knowledge_base(query: str, top_k: int = 5) -> str:
         title = doc["title"] or "Untitled"
         source = f" (source: {doc['source']})" if doc["source"] else ""
         parts.append(
-            f"---\n"
-            f"**[{i}] {title}**{source}  \n"
-            f"Relevance: {doc['score']:.0%}\n\n"
-            f"{doc['content']}\n"
+            f"---\n**[{i}] {title}**{source}  \nRelevance: {doc['score']:.0%}\n\n{doc['content']}\n"
         )
 
     return "\n".join(parts)

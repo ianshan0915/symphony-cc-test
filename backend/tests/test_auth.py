@@ -69,9 +69,7 @@ class TestJWT:
 
 class TestAuthMiddleware:
     @pytest.fixture
-    async def authed_client(
-        self, db_session: AsyncSession, test_user: User
-    ) -> AsyncClient:
+    async def authed_client(self, db_session: AsyncSession, test_user: User) -> AsyncClient:
         """Client that sends a valid JWT but does NOT override auth dependency."""
         from collections.abc import AsyncGenerator
 
@@ -100,25 +98,17 @@ class TestAuthMiddleware:
         resp2 = await unauthed_client.get("/healthz")
         assert resp2.status_code == 200
 
-    async def test_protected_endpoint_no_token_returns_401(
-        self, unauthed_client: AsyncClient
-    ):
+    async def test_protected_endpoint_no_token_returns_401(self, unauthed_client: AsyncClient):
         """Protected endpoints return 401/403 when no Bearer token is sent."""
         resp = await unauthed_client.get("/threads")
         assert resp.status_code in (401, 403)
 
-    async def test_protected_endpoint_invalid_token_returns_401(
-        self, unauthed_client: AsyncClient
-    ):
+    async def test_protected_endpoint_invalid_token_returns_401(self, unauthed_client: AsyncClient):
         """Protected endpoints return 401 for invalid tokens."""
-        resp = await unauthed_client.get(
-            "/threads", headers={"Authorization": "Bearer bad-token"}
-        )
+        resp = await unauthed_client.get("/threads", headers={"Authorization": "Bearer bad-token"})
         assert resp.status_code == 401
 
-    async def test_protected_endpoint_valid_token_ok(
-        self, authed_client: AsyncClient
-    ):
+    async def test_protected_endpoint_valid_token_ok(self, authed_client: AsyncClient):
         """Protected endpoints return 200 with a valid JWT."""
         resp = await authed_client.get("/threads")
         assert resp.status_code == 200
