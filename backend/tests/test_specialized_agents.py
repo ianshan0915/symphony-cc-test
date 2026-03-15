@@ -323,42 +323,46 @@ class TestToolResolution:
 class TestFactoryWithAssistantType:
     """Tests for create_deep_agent with assistant_type parameter."""
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_researcher_agent(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_create_researcher_agent(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         agent = create_deep_agent(assistant_type="researcher")
         assert agent is not None
-        assert hasattr(agent, "ainvoke")
+        mock_da_create.assert_called_once()
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_coder_agent(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_create_coder_agent(self, mock_model: MagicMock, mock_da_create: MagicMock) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         agent = create_deep_agent(assistant_type="coder")
         assert agent is not None
-        assert hasattr(agent, "ainvoke")
+        mock_da_create.assert_called_once()
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_writer_agent(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_create_writer_agent(self, mock_model: MagicMock, mock_da_create: MagicMock) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         agent = create_deep_agent(assistant_type="writer")
         assert agent is not None
-        assert hasattr(agent, "ainvoke")
+        mock_da_create.assert_called_once()
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_explicit_prompt_overrides_assistant_type(self, mock_model: MagicMock) -> None:
+    def test_explicit_prompt_overrides_assistant_type(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
         """When both system_prompt and assistant_type are given, system_prompt wins."""
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         custom_prompt = "You are a custom agent."
         agent = create_deep_agent(
@@ -366,15 +370,21 @@ class TestFactoryWithAssistantType:
             assistant_type="researcher",
         )
         assert agent is not None
+        # Verify custom prompt overrides assistant_type prompt
+        call_kwargs = mock_da_create.call_args
+        assert call_kwargs.kwargs["system_prompt"] == custom_prompt
 
+    @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_unknown_type_falls_back_to_general(self, mock_model: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
-        mock_model.return_value = mock_llm
+    def test_unknown_type_falls_back_to_general(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
 
         agent = create_deep_agent(assistant_type="nonexistent")
         assert agent is not None
+        mock_da_create.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
