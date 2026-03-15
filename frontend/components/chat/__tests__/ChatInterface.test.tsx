@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { ChatInterface } from "../ChatInterface";
+import { AuthProvider } from "@/providers/AuthProvider";
 
 // Mock scrollIntoView
 beforeAll(() => {
@@ -65,7 +66,7 @@ afterEach(() => {
 describe("ChatInterface", () => {
   it("renders the header, message list, and input", async () => {
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
     expect(screen.getByText("Symphony Chat")).toBeInTheDocument();
     expect(screen.getByLabelText("Message input")).toBeInTheDocument();
@@ -74,7 +75,7 @@ describe("ChatInterface", () => {
 
   it("renders the assistant selector in the header", async () => {
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
 
     await waitFor(() => {
@@ -106,7 +107,7 @@ describe("ChatInterface", () => {
     });
 
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
 
     const input = screen.getByLabelText("Message input");
@@ -139,7 +140,7 @@ describe("ChatInterface", () => {
     );
 
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
 
     const input = screen.getByLabelText("Message input");
@@ -155,7 +156,7 @@ describe("ChatInterface", () => {
     });
 
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
 
     const input = screen.getByLabelText("Message input");
@@ -168,7 +169,7 @@ describe("ChatInterface", () => {
 
   it("renders sidebars on the page", async () => {
     await act(async () => {
-      render(<ChatInterface />);
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
     });
     expect(screen.getByText("Agent Tasks")).toBeInTheDocument();
     expect(screen.getByText("File Operations")).toBeInTheDocument();
