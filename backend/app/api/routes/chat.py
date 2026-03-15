@@ -161,8 +161,9 @@ async def chat_stream(
     else:
         from app.models.thread import ThreadCreate
 
+        aid = str(assistant_id) if assistant_id else "default"
         thread = await thread_svc.create(
-            ThreadCreate(title=body.message[:80], assistant_id=str(assistant_id) if assistant_id else "default")
+            ThreadCreate(title=body.message[:80], assistant_id=aid)
         )
 
     # Persist user message
