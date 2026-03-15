@@ -71,7 +71,11 @@ def decode_access_token(token: str) -> TokenPayload:
 # Database session
 # ---------------------------------------------------------------------------
 
-_bearer_scheme = HTTPBearer(auto_error=not settings.debug)
+# Always use auto_error=False so auth behaviour is determined at runtime
+# (inside get_current_user) rather than at import time.  Previously,
+# auto_error was set to ``not settings.debug`` at module level, which meant
+# DEBUG=true permanently disabled the 401 response for missing tokens.
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 # Stable UUID for the synthetic dev user so references stay consistent.
 _DEV_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
