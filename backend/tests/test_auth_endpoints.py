@@ -8,10 +8,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import create_access_token, get_db_session, hash_password
+from app.api.deps import (
+    create_access_token,
+    get_db_session,
+    hash_password,
+)
 from app.main import app
 from app.models.user import User
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -163,7 +166,9 @@ class TestMe:
 
 
 class TestRefresh:
-    async def test_refresh_returns_new_token(self, auth_client: AsyncClient, db_session: AsyncSession):
+    async def test_refresh_returns_new_token(
+        self, auth_client: AsyncClient, db_session: AsyncSession,
+    ):
         user = User(
             email="refresh@example.com",
             hashed_password=hash_password("mypassword123"),
