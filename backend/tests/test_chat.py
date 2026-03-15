@@ -1,4 +1,4 @@
-"""Tests for SSE streaming chat endpoint (SYM-15)."""
+"""Tests for SSE streaming chat endpoint (SYM-15, SYM-72)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,10 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import AsyncClient
 
+from app.models.assistant import AssistantCreate
 from app.models.thread import ThreadCreate
 from app.services.agent_service import AgentService, SSEEvent
+from app.services.assistant_service import AssistantService
 from app.services.thread_service import ThreadService
 
 # ---------------------------------------------------------------------------
@@ -156,6 +158,93 @@ class TestChatStreamEndpoint:
             body = resp.text
             assert "event: message_start" in body
             assert "event: message_end" in body
+        finally:
+            agent_service.stream_response = original_stream  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_uses_assistant_id_for_agent_routing(
+        self,
+        client: AsyncClient,
+        db_session,
+    ) -> None:
+        """When assistant_id is provided, the agent_type from assistant metadata is used."""
+
+        # Create an assistant with agent_type metadata
+        assistant_svc = AssistantService(db_session)
+        assistant = await assistant_svc.create(
+            AssistantCreate(
+                name="Test Researcher",
+                description="Research assistant",
+                model="gpt-4o",
+                tools_enabled=[],
+                metadata={"agent_type": "researcher", "is_default": False},
+            )
+        )
+
+        captured_kwargs: dict = {}
+
+        async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
+            captured_kwargs.update(kwargs)
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "Research result",
+                    "tool_calls": None,
+                },
+            )
+
+        from app.services.agent_service import agent_service
+
+        original_stream = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            resp = await client.post(
+                f"/chat/stream?assistant_id={assistant.id}",
+                json={"message": "research this topic"},
+            )
+            assert resp.status_code == 200
+            # Verify the agent routing received the correct assistant_type
+            assert captured_kwargs.get("assistant_type") == "researcher"
+        finally:
+            agent_service.stream_response = original_stream  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_unknown_assistant_id_falls_back(
+        self,
+        client: AsyncClient,
+        db_session,
+    ) -> None:
+        """An unknown assistant_id should fall back to the default agent (None type)."""
+
+        captured_kwargs: dict = {}
+
+        async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
+            captured_kwargs.update(kwargs)
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "Hello",
+                    "tool_calls": None,
+                },
+            )
+
+        from app.services.agent_service import agent_service
+
+        original_stream = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            fake_id = str(uuid.uuid4())
+            resp = await client.post(
+                f"/chat/stream?assistant_id={fake_id}",
+                json={"message": "hello"},
+            )
+            assert resp.status_code == 200
+            # assistant_type should be None (fallback to default)
+            assert captured_kwargs.get("assistant_type") is None
         finally:
             agent_service.stream_response = original_stream  # type: ignore[assignment]
 

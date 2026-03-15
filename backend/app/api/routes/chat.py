@@ -15,6 +15,7 @@ from app.api.deps import get_current_user, get_db_session
 from app.models.message import Message
 from app.models.thread import Thread
 from app.services.agent_service import SSEEvent, agent_service
+from app.services.assistant_service import AssistantService
 from app.services.thread_service import ThreadService
 
 logger = logging.getLogger(__name__)
@@ -118,12 +119,15 @@ async def _persist_assistant_message(
 async def chat_stream(
     body: ChatRequest,
     thread_id: uuid.UUID | None = None,
+    assistant_id: uuid.UUID | None = None,
     session: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
     """Stream an agent response as Server-Sent Events.
 
-    Accepts a user message and an optional ``thread_id`` query parameter.
-    If no thread_id is provided, a new thread is created automatically.
+    Accepts a user message and optional query parameters:
+
+    - ``thread_id`` — existing thread to continue; a new thread is created if omitted.
+    - ``assistant_id`` — assistant whose ``agent_type`` metadata determines routing.
 
     **SSE event types:**
 
@@ -138,6 +142,16 @@ async def chat_stream(
     """
     thread_svc = ThreadService(session)
 
+    # Resolve assistant_type from assistant_id or request body
+    assistant_type = body.assistant_type
+    if assistant_id is not None and assistant_type is None:
+        assistant_svc = AssistantService(session)
+        assistant = await assistant_svc.get(assistant_id)
+        if assistant is not None:
+            assistant_type = (assistant.metadata_ or {}).get("agent_type")
+        else:
+            logger.warning("Assistant %s not found, falling back to default agent", assistant_id)
+
     # Resolve or create thread
     thread: Thread | None = None
     if thread_id is not None:
@@ -147,9 +161,8 @@ async def chat_stream(
     else:
         from app.models.thread import ThreadCreate
 
-        thread = await thread_svc.create(
-            ThreadCreate(title=body.message[:80], assistant_id="default")
-        )
+        aid = str(assistant_id) if assistant_id else "default"
+        thread = await thread_svc.create(ThreadCreate(title=body.message[:80], assistant_id=aid))
 
     # Persist user message
     await _persist_user_message(session, thread, body.message)
@@ -163,7 +176,7 @@ async def chat_stream(
             thread_id=str(thread.id),
             user_message=body.message,
             thread=thread,
-            assistant_type=body.assistant_type,
+            assistant_type=assistant_type,
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":
