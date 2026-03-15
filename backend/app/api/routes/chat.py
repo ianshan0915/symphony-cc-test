@@ -32,6 +32,10 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=32_000, description="User message text")
     model: str | None = Field(default=None, description="Optional model override")
+    assistant_id: str | None = Field(
+        default=None,
+        description="Assistant UUID to associate the thread with",
+    )
     assistant_type: str | None = Field(
         default=None,
         description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
@@ -148,7 +152,7 @@ async def chat_stream(
         from app.models.thread import ThreadCreate
 
         thread = await thread_svc.create(
-            ThreadCreate(title=body.message[:80], assistant_id="default")
+            ThreadCreate(title=body.message[:80], assistant_id=body.assistant_id or "default")
         )
 
     # Persist user message
