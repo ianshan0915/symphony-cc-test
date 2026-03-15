@@ -22,18 +22,22 @@ AGENT_PROMPT_REGISTRY: dict[str, dict[str, Any]] = {
     "general": {
         "system_prompt": GENERAL_SYSTEM_PROMPT,
         "tools": None,  # None means "use all available tools"
+        "skills": None,  # None means "use all available skills"
     },
     "researcher": {
         "system_prompt": RESEARCHER_SYSTEM_PROMPT,
         "tools": RESEARCHER_TOOLS,
+        "skills": ["web-research", "data-analysis"],
     },
     "coder": {
         "system_prompt": CODER_SYSTEM_PROMPT,
         "tools": CODER_TOOLS,
+        "skills": ["code-review", "debugging"],
     },
     "writer": {
         "system_prompt": WRITER_SYSTEM_PROMPT,
         "tools": WRITER_TOOLS,
+        "skills": ["content-writing", "editing"],
     },
 }
 
@@ -64,6 +68,18 @@ def get_tools_for_agent_type(agent_type: str) -> list[str] | None:
     return tools
 
 
+def get_skills_for_agent_type(agent_type: str) -> list[str] | None:
+    """Return the recommended skill names for the given agent type.
+
+    Returns ``None`` for unknown types or ``"general"`` (meaning all skills).
+    """
+    entry = AGENT_PROMPT_REGISTRY.get(agent_type)
+    if entry is None:
+        return None
+    skills: list[str] | None = entry.get("skills")
+    return skills
+
+
 __all__ = [
     "AGENT_PROMPT_REGISTRY",
     "CODER_SYSTEM_PROMPT",
@@ -75,5 +91,6 @@ __all__ = [
     "WRITER_SYSTEM_PROMPT",
     "WRITER_TOOLS",
     "get_prompt_for_agent_type",
+    "get_skills_for_agent_type",
     "get_tools_for_agent_type",
 ]

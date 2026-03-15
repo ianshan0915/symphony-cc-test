@@ -26,6 +26,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3,<4",
     "bcrypt>=4.0,<5",
     "pydantic[email]>=2.0,<3",
+    "pyyaml>=6.0,<7",
 ]
 
 [tool.hatch.build.targets.wheel]

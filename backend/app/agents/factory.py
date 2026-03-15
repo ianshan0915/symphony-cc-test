@@ -24,6 +24,7 @@ from app.agents.prompts import (
     get_prompt_for_agent_type,
     get_tools_for_agent_type,
 )
+from app.agents.skills import resolve_skill_paths
 from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
@@ -196,6 +197,8 @@ def create_deep_agent(
     tools: Sequence[BaseTool] | None = None,
     system_prompt: str | None = None,
     assistant_type: str | None = None,
+    skills: list[str] | None = None,
+    extra_skill_dirs: list[str] | None = None,
     checkpointer: Any | None = None,
     store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
@@ -217,6 +220,13 @@ def create_deep_agent(
         Agent specialization type (``"researcher"``, ``"coder"``, ``"writer"``,
         or ``"general"``). Determines the system prompt and default tool set.
         Ignored when ``system_prompt`` is provided.
+    skills:
+        Explicit list of skill names to load. Takes precedence over
+        ``assistant_type`` skill resolution. Skill directories are resolved
+        from the system-wide skills directory and any ``extra_skill_dirs``.
+    extra_skill_dirs:
+        Additional directories to scan for skills beyond the system-wide
+        skills directory. Useful for project-level or user-level skills.
     checkpointer:
         LangGraph checkpointer for persisting thread state across invocations.
         Defaults to the shared checkpointer (``AsyncPostgresSaver`` when
@@ -249,24 +259,39 @@ def create_deep_agent(
     # Resolve tools
     agent_tools = _resolve_tools(tools, assistant_type)
 
+    # Resolve skills via progressive disclosure
+    skill_paths = resolve_skill_paths(
+        skills=skills,
+        assistant_type=assistant_type,
+        extra_skill_dirs=extra_skill_dirs,
+    )
+
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, checkpointer=%s, store=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
+        "checkpointer=%s, store=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
+        len(skill_paths),
         type(saver).__name__,
         type(memory_store).__name__,
     )
 
-    agent = _deepagents_create(
-        model=llm,
-        tools=agent_tools,
-        system_prompt=prompt,
-        checkpointer=saver,
-        store=memory_store,
-    )
+    create_kwargs: dict[str, Any] = {
+        "model": llm,
+        "tools": agent_tools,
+        "system_prompt": prompt,
+        "checkpointer": saver,
+        "store": memory_store,
+    }
+
+    # Pass skills to deepagents if any were resolved
+    if skill_paths:
+        create_kwargs["skills"] = skill_paths
+
+    agent = _deepagents_create(**create_kwargs)
 
     return agent
