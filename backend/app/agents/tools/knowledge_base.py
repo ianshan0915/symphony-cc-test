@@ -51,7 +51,8 @@ async def _get_embedding(query: str) -> list[float]:
             )
             response.raise_for_status()
             data = response.json()
-            return data["data"][0]["embedding"]
+            embedding: list[float] = data["data"][0]["embedding"]
+            return embedding
     except Exception:
         logger.exception("Failed to generate embedding for query: %s", query[:100])
         raise
@@ -166,10 +167,7 @@ async def search_knowledge_base(query: str, top_k: int = 5) -> str:
         title = doc["title"] or "Untitled"
         source = f" (source: {doc['source']})" if doc["source"] else ""
         parts.append(
-            f"---\n"
-            f"**[{i}] {title}**{source}  \n"
-            f"Relevance: {doc['score']:.0%}\n\n"
-            f"{doc['content']}\n"
+            f"---\n**[{i}] {title}**{source}  \nRelevance: {doc['score']:.0%}\n\n{doc['content']}\n"
         )
 
     return "\n".join(parts)

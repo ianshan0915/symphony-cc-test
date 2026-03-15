@@ -28,7 +28,7 @@ class Document(Base):
     # raw SQL in the migration.  SQLAlchemy doesn't need to map it for writes;
     # similarity searches use raw SQL as well.
     source: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    metadata_: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+    metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
     created_at: Mapped[datetime] = mapped_column(

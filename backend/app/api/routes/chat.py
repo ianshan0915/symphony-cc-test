@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -61,7 +62,7 @@ class PendingApprovalResponse(BaseModel):
     approval_id: str | None = None
     thread_id: str | None = None
     tool_name: str | None = None
-    tool_args: dict | None = None
+    tool_args: dict[str, Any] | None = None
     run_id: str | None = None
 
 
@@ -92,7 +93,7 @@ async def _persist_assistant_message(
     session: AsyncSession,
     thread: Thread,
     content: str,
-    tool_calls: list | None = None,
+    tool_calls: list[Any] | None = None,
 ) -> Message:
     """Persist the assistant's response to the database."""
     msg = Message(
@@ -153,10 +154,10 @@ async def chat_stream(
     # Persist user message
     await _persist_user_message(session, thread, body.message)
 
-    async def _event_generator():
+    async def _event_generator() -> Any:
         """Generate SSE events from the agent and persist the result."""
         full_content = ""
-        tool_calls = []
+        tool_calls: list[Any] = []
 
         async for sse_event in agent_service.stream_response(
             thread_id=str(thread.id),
@@ -174,9 +175,7 @@ async def chat_stream(
         # Persist assistant response after streaming completes
         if full_content:
             try:
-                await _persist_assistant_message(
-                    session, thread, full_content, tool_calls or None
-                )
+                await _persist_assistant_message(session, thread, full_content, tool_calls or None)
             except Exception:
                 logger.exception("Failed to persist assistant message for thread %s", thread.id)
                 yield SSEEvent(

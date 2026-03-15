@@ -24,7 +24,7 @@ class Thread(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     assistant_id: Mapped[str] = mapped_column(String(100), nullable=False, default="default")
-    metadata_: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+    metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

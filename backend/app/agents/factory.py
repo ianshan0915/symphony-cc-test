@@ -18,9 +18,8 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import create_react_agent
 
-from app.agents.middleware import get_memory_store
+from app.agents.middleware import get_checkpointer, get_memory_store
 from app.agents.prompts import (
-    AGENT_PROMPT_REGISTRY,
     GENERAL_SYSTEM_PROMPT,
     get_prompt_for_agent_type,
     get_tools_for_agent_type,
@@ -113,9 +112,9 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
                 "langchain-anthropic is required for Anthropic models. "
                 "Install it with: pip install langchain-anthropic"
             ) from exc
-        return ChatAnthropic(
-            model=model,  # type: ignore[call-arg]
-            anthropic_api_key=settings.anthropic_api_key or None,  # type: ignore[call-arg]
+        return ChatAnthropic(  # type: ignore[no-any-return]
+            model=model,
+            anthropic_api_key=settings.anthropic_api_key or None,
             streaming=True,
             **kwargs,
         )
@@ -194,7 +193,7 @@ def create_deep_agent(
     checkpointer: Any | None = None,
     store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a LangGraph ReAct agent with the given configuration.
 
     Parameters

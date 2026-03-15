@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.agents.factory import (
     _get_agent_type_prompt,
     _get_cached_prompt,
@@ -34,7 +32,6 @@ from app.agents.prompts.general import GENERAL_SYSTEM_PROMPT
 from app.agents.prompts.researcher import RESEARCHER_SYSTEM_PROMPT, RESEARCHER_TOOLS
 from app.agents.prompts.writer import WRITER_SYSTEM_PROMPT, WRITER_TOOLS
 
-
 # ---------------------------------------------------------------------------
 # Researcher prompt tests
 # ---------------------------------------------------------------------------
@@ -53,7 +50,8 @@ class TestResearcherPrompt:
         assert "search" in RESEARCHER_SYSTEM_PROMPT.lower()
 
     def test_prompt_emphasizes_citation(self) -> None:
-        assert "cite" in RESEARCHER_SYSTEM_PROMPT.lower() or "citation" in RESEARCHER_SYSTEM_PROMPT.lower()
+        prompt = RESEARCHER_SYSTEM_PROMPT.lower()
+        assert "cite" in prompt or "citation" in prompt
 
     def test_prompt_mentions_sources(self) -> None:
         assert "Sources" in RESEARCHER_SYSTEM_PROMPT or "sources" in RESEARCHER_SYSTEM_PROMPT
@@ -85,7 +83,8 @@ class TestCoderPrompt:
         assert "code" in CODER_SYSTEM_PROMPT.lower()
 
     def test_prompt_mentions_type_hints(self) -> None:
-        assert "type hints" in CODER_SYSTEM_PROMPT.lower() or "type hint" in CODER_SYSTEM_PROMPT.lower()
+        prompt = CODER_SYSTEM_PROMPT.lower()
+        assert "type hints" in prompt or "type hint" in prompt
 
     def test_prompt_mentions_testing(self) -> None:
         assert "test" in CODER_SYSTEM_PROMPT.lower()
@@ -148,7 +147,13 @@ class TestPromptDistinctness:
         assert len(set(prompts)) == 4, "All four prompts must be unique"
 
     def test_all_prompts_mention_symphony(self) -> None:
-        for prompt in [GENERAL_SYSTEM_PROMPT, RESEARCHER_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT, WRITER_SYSTEM_PROMPT]:
+        all_prompts = [
+            GENERAL_SYSTEM_PROMPT,
+            RESEARCHER_SYSTEM_PROMPT,
+            CODER_SYSTEM_PROMPT,
+            WRITER_SYSTEM_PROMPT,
+        ]
+        for prompt in all_prompts:
             assert "Symphony" in prompt
 
 
@@ -167,7 +172,8 @@ class TestAgentPromptRegistry:
         assert "writer" in AGENT_PROMPT_REGISTRY
 
     def test_valid_agent_types_set(self) -> None:
-        assert VALID_AGENT_TYPES == {"general", "researcher", "coder", "writer"}
+        expected = {"general", "researcher", "coder", "writer"}
+        assert expected == VALID_AGENT_TYPES
 
     def test_registry_entries_have_required_keys(self) -> None:
         for agent_type, entry in AGENT_PROMPT_REGISTRY.items():
@@ -381,18 +387,27 @@ class TestModuleExports:
 
     def test_prompts_init_exports_all_prompts(self) -> None:
         from app.agents.prompts import (
-            CODER_SYSTEM_PROMPT as c,
-            GENERAL_SYSTEM_PROMPT as g,
-            RESEARCHER_SYSTEM_PROMPT as r,
-            WRITER_SYSTEM_PROMPT as w,
+            CODER_SYSTEM_PROMPT as CODER_P,
         )
-        assert all([g, r, c, w])
+        from app.agents.prompts import (
+            GENERAL_SYSTEM_PROMPT as GENERAL_P,
+        )
+        from app.agents.prompts import (
+            RESEARCHER_SYSTEM_PROMPT as RESEARCHER_P,
+        )
+        from app.agents.prompts import (
+            WRITER_SYSTEM_PROMPT as WRITER_P,
+        )
+
+        assert all([GENERAL_P, RESEARCHER_P, CODER_P, WRITER_P])
 
     def test_prompts_init_exports_registry(self) -> None:
-        from app.agents.prompts import AGENT_PROMPT_REGISTRY as reg
-        assert len(reg) == 4
+        from app.agents.prompts import AGENT_PROMPT_REGISTRY as REG
+
+        assert len(REG) == 4
 
     def test_prompts_init_exports_helpers(self) -> None:
         from app.agents.prompts import get_prompt_for_agent_type, get_tools_for_agent_type
+
         assert callable(get_prompt_for_agent_type)
         assert callable(get_tools_for_agent_type)

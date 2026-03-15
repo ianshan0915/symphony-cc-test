@@ -1,4 +1,4 @@
-"""Coder agent system prompt — optimized for code generation, review, and technical problem-solving."""
+"""Coder agent system prompt — optimized for code generation, review, and problem-solving."""
 
 CODER_SYSTEM_PROMPT = """\
 You are Symphony Coder, an expert software engineering assistant specializing \

@@ -88,19 +88,19 @@ class AgentService:
     execution.  Supports human-in-the-loop approval for designated tools.
     """
 
-    def __init__(self, agent: CompiledStateGraph | None = None) -> None:
+    def __init__(self, agent: CompiledStateGraph | None = None) -> None:  # type: ignore[type-arg]
         self._agent = agent
         # Map of thread_id -> PendingApproval for active approval requests
         self._pending_approvals: dict[str, PendingApproval] = {}
 
     @property
-    def agent(self) -> CompiledStateGraph:
+    def agent(self) -> CompiledStateGraph:  # type: ignore[type-arg]
         """Return the default agent graph, creating one lazily if needed."""
         if self._agent is None:
             self._agent = create_deep_agent()
         return self._agent
 
-    def get_agent(self, assistant_type: str | None = None) -> CompiledStateGraph:
+    def get_agent(self, assistant_type: str | None = None) -> CompiledStateGraph:  # type: ignore[type-arg]
         """Return an agent for the given assistant type.
 
         If *assistant_type* is ``None`` or ``"general"``, returns the default
@@ -111,7 +111,7 @@ class AgentService:
             return self.agent
         return create_deep_agent(assistant_type=assistant_type)
 
-    def set_agent(self, agent: CompiledStateGraph) -> None:
+    def set_agent(self, agent: CompiledStateGraph) -> None:  # type: ignore[type-arg]
         """Replace the current agent graph (useful for testing)."""
         self._agent = agent
 
@@ -199,7 +199,7 @@ class AgentService:
         try:
             async for event in active_agent.astream_events(
                 {"messages": input_messages},
-                config=config,
+                config=config,  # type: ignore[arg-type]
                 version="v2",
             ):
                 kind = event.get("event", "")

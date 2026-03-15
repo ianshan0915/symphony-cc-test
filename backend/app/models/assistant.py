@@ -26,10 +26,10 @@ class Assistant(Base):
     description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     model: Mapped[str] = mapped_column(String(100), nullable=False, default="gpt-4o")
     system_prompt: Mapped[Optional[str]] = mapped_column(String(10000), nullable=True)
-    tools_enabled: Mapped[list] = mapped_column(  # type: ignore[assignment]
+    tools_enabled: Mapped[list] = mapped_column(  # type: ignore[type-arg]
         JSONType(), nullable=False, default=list
     )
-    metadata_: Mapped[dict] = mapped_column(  # type: ignore[assignment]
+    metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
     temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
