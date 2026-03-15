@@ -70,5 +70,13 @@ You can help with:
 - ✅ Strong opening and closing
 """
 
-# Recommended tools for the writer agent — web search for research, KB for style guides
-WRITER_TOOLS = ["web_search", "search_knowledge_base"]
+# Recommended tools for the writer agent — web search, KB, and file tools for saving content
+WRITER_TOOLS = [
+    "web_search",
+    "search_knowledge_base",
+    "create_file",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_files",
+]

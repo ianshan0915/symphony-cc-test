@@ -58,5 +58,12 @@ You excel at:
 - Statistical data gathering with source attribution
 """
 
-# Recommended tools for the researcher agent — order indicates priority
-RESEARCHER_TOOLS = ["web_search", "search_knowledge_base"]
+# Recommended tools for the researcher agent — search tools plus file tools for saving findings
+RESEARCHER_TOOLS = [
+    "web_search",
+    "search_knowledge_base",
+    "create_file",
+    "read_file",
+    "write_file",
+    "list_files",
+]
