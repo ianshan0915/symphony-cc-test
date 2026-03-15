@@ -32,11 +32,27 @@ function mockAssistantsResponse() {
   };
 }
 
+/** Mock response for the /threads endpoint (conversation list) */
+function mockThreadsResponse() {
+  return {
+    ok: true,
+    json: async () => ({
+      threads: [],
+      total: 0,
+      offset: 0,
+      limit: 50,
+    }),
+  };
+}
+
 /** Route-aware fetch mock: assistants endpoint vs everything else */
 function setupFetchMock(chatHandler?: (url: string, init?: RequestInit) => Promise<unknown>) {
   (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
     if (url.includes("/assistants")) {
       return Promise.resolve(mockAssistantsResponse());
+    }
+    if (url.includes("/threads")) {
+      return Promise.resolve(mockThreadsResponse());
     }
     if (chatHandler) {
       return chatHandler(url, init);
@@ -56,6 +72,8 @@ function setupFetchMock(chatHandler?: (url: string, init?: RequestInit) => Promi
 // Mock fetch for SSE streaming
 beforeEach(() => {
   global.fetch = jest.fn();
+  // Clear persisted thread ID to avoid cross-test leakage
+  localStorage.removeItem("symphony_current_thread_id");
   setupFetchMock();
 });
 
@@ -151,8 +169,12 @@ describe("ChatInterface", () => {
   });
 
   it("displays error message on fetch failure", async () => {
-    setupFetchMock(async () => {
-      throw new Error("Network error");
+    setupFetchMock(async (url) => {
+      if (url.includes("/chat/stream")) {
+        throw new Error("Network error");
+      }
+      // Fallback for other URLs
+      return { ok: true, json: async () => ({}) };
     });
 
     await act(async () => {
@@ -173,5 +195,6 @@ describe("ChatInterface", () => {
     });
     expect(screen.getByText("Agent Tasks")).toBeInTheDocument();
     expect(screen.getByText("File Operations")).toBeInTheDocument();
+    expect(screen.getByText("Conversations")).toBeInTheDocument();
   });
 });

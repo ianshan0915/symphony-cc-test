@@ -94,6 +94,29 @@ export interface SubAgent {
   completedAt?: string;
 }
 
+/** Thread detail returned by GET /threads/{id} */
+export interface ThreadDetail {
+  id: string;
+  title: string | null;
+  assistant_id: string;
+  metadata: Record<string, unknown>;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+  messages: ThreadMessage[];
+}
+
+/** Message as stored on the backend */
+export interface ThreadMessage {
+  id: string;
+  thread_id: string;
+  role: string;
+  content: string;
+  tool_calls?: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 /** A file operation tracked by the agent */
 export interface FileOperation {
   id: string;
