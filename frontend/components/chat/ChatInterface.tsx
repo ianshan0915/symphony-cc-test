@@ -10,6 +10,8 @@ import { TasksSidebar } from "@/components/sidebar/TasksSidebar";
 import { FilesSidebar } from "@/components/sidebar/FilesSidebar";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
+import { apiFetch } from "@/lib/api";
+import { UserMenu } from "@/components/UserMenu";
 import type {
   Message,
   ApprovalRequest,
@@ -83,7 +85,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       }
 
       try {
-        const response = await fetch(url.toString(), {
+        const response = await apiFetch(url.toString(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: content }),
@@ -197,7 +199,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       setIsApprovalSubmitting(true);
 
       try {
-        const response = await fetch(`${config.apiUrl}/chat/approval`, {
+        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -238,7 +240,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       setIsApprovalSubmitting(true);
 
       try {
-        const response = await fetch(`${config.apiUrl}/chat/approval`, {
+        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -308,12 +310,15 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
               disabled={isLoading}
             />
           </div>
-          {pendingApproval && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-500 bg-amber-500/10 rounded-full px-2.5 py-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-              Approval pending
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {pendingApproval && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-500 bg-amber-500/10 rounded-full px-2.5 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Approval pending
+              </span>
+            )}
+            <UserMenu />
+          </div>
         </header>
 
         {/* Message list — takes up remaining vertical space */}

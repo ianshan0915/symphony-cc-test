@@ -14,12 +14,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.middleware import setup_persistent_backends, teardown_persistent_backends
 from app.api.routes.assistants import router as assistants_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
 from app.api.routes.threads import router as threads_router
 from app.config import settings
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
 from app.services.agent_service import agent_service
+from app.services.assistant_service import seed_default_assistants
 
 # ---------------------------------------------------------------------------
 # Request ID context variable (propagated through the entire request lifecycle)
@@ -93,6 +95,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Debug mode: auto-created database tables")
+    # Seed default assistants if the table is empty
+    async with async_session_factory() as session:
+        await seed_default_assistants(session)
+
     await setup_persistent_backends()
     _ = agent_service.agent
     yield
@@ -158,6 +164,7 @@ async def request_id_middleware(
 
 # --- Routes ---
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(threads_router)
 app.include_router(chat_router)
 app.include_router(assistants_router)
