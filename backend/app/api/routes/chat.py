@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db_session
+from app.api.deps import get_current_user, get_db_session, rate_limiter, rate_limiter_strict, set_request_user_id
 from app.models.message import Message
 from app.models.thread import Thread
 from app.services.agent_service import SSEEvent, agent_service
@@ -19,7 +19,11 @@ from app.services.thread_service import ThreadService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    prefix="/chat",
+    tags=["chat"],
+    dependencies=[Depends(set_request_user_id)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +118,11 @@ async def _persist_assistant_message(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/stream", response_class=StreamingResponse)
+@router.post(
+    "/stream",
+    response_class=StreamingResponse,
+    dependencies=[Depends(rate_limiter_strict)],
+)
 async def chat_stream(
     body: ChatRequest,
     thread_id: uuid.UUID | None = None,
@@ -199,7 +207,11 @@ async def chat_stream(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/approval", response_model=ApprovalDecisionResponse)
+@router.post(
+    "/approval",
+    response_model=ApprovalDecisionResponse,
+    dependencies=[Depends(rate_limiter)],
+)
 async def submit_approval_decision(
     body: ApprovalDecisionRequest,
 ) -> ApprovalDecisionResponse:

@@ -142,6 +142,20 @@ async def get_current_user(
 
 
 # ---------------------------------------------------------------------------
+# Request-state enrichment (for rate limiting by user)
+# ---------------------------------------------------------------------------
+
+
+async def set_request_user_id(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> None:
+    """Copy the authenticated user's ID onto ``request.state`` so downstream
+    dependencies (e.g. :class:`RateLimiter`) can key limits per-user."""
+    request.state.user_id = str(user.id)
+
+
+# ---------------------------------------------------------------------------
 # Service providers
 # ---------------------------------------------------------------------------
 
