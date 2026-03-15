@@ -119,16 +119,14 @@ DEFAULT_ASSISTANTS: list[dict[str, object]] = [
     {
         "name": "Researcher",
         "description": (
-            "An expert research assistant focused on web search,"
-            " fact-finding, and citation."
+            "An expert research assistant focused on web search, fact-finding, and citation."
         ),
         "type": "researcher",
     },
     {
         "name": "Coder",
         "description": (
-            "An expert software engineering assistant for writing,"
-            " reviewing, and debugging code."
+            "An expert software engineering assistant for writing, reviewing, and debugging code."
         ),
         "type": "coder",
     },
