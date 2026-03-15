@@ -101,7 +101,12 @@ async def get_current_user(
     """
     if credentials is None and settings.debug:
         # Return an in-memory dev user for local development (no DB required)
-        user = User(id=_DEV_USER_ID, email="dev@localhost", hashed_password="")
+        user = User(
+            id=_DEV_USER_ID,
+            email="dev@localhost",
+            hashed_password="",
+            created_at=datetime.now(timezone.utc),
+        )
         logger.debug("Using synthetic dev user (debug mode)")
         return user
 
