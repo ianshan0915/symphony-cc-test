@@ -9,6 +9,8 @@ export interface ToolCall {
   args: Record<string, unknown>;
   result?: string;
   status?: "pending" | "running" | "completed" | "error" | "awaiting_approval" | "rejected";
+  /** LangGraph run_id — used to correlate tool_result events for approval-required tools */
+  runId?: string;
 }
 
 /** A chat message */

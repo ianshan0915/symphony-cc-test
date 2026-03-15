@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # --- Database (PostgreSQL + asyncpg) ---
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/symphony"
+    database_url: str = "postgresql+asyncpg://symphony:symphony_local@localhost:5432/symphony"
 
     # --- Database connection pool tuning ---
     db_pool_size: int = 10
@@ -39,16 +39,21 @@ class Settings(BaseSettings):
 
     # --- LLM / LangChain ---
     openai_api_key: str = ""
+    openai_base_url: str = ""
     anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
     default_model: str = "gpt-4o"
 
     # --- LangSmith Observability ---
     langchain_tracing_v2: bool = False
     langchain_api_key: str = ""
     langchain_project: str = "symphony"
+    langchain_endpoint: str = ""
+    langsmith_tracing: bool = False
+    langsmith_endpoint: str = ""
 
-    # --- Tavily Web Search ---
-    tavily_api_key: str = ""
+    # --- Brave Web Search ---
+    brave_api_key: str = ""
 
     # --- JWT Authentication ---
     jwt_secret_key: str = "change-me-in-production"

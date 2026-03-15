@@ -71,7 +71,10 @@ def decode_access_token(token: str) -> TokenPayload:
 # Database session
 # ---------------------------------------------------------------------------
 
-_bearer_scheme = HTTPBearer(auto_error=True)
+_bearer_scheme = HTTPBearer(auto_error=not settings.debug)
+
+# Stable UUID for the synthetic dev user so references stay consistent.
+_DEV_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -86,13 +89,29 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     session: AsyncSession = Depends(get_db_session),
 ) -> User:
     """Validate the Bearer token and return the authenticated User.
 
+    When ``settings.debug`` is True and no token is provided, returns (or
+    creates) a synthetic dev user so the frontend can work without auth.
+
     Raises 401 if the token is invalid, expired, or the user no longer exists.
     """
+    if credentials is None and settings.debug:
+        # Return an in-memory dev user for local development (no DB required)
+        user = User(id=_DEV_USER_ID, email="dev@localhost", hashed_password="")
+        logger.debug("Using synthetic dev user (debug mode)")
+        return user
+
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = decode_access_token(credentials.credentials)
 
     try:

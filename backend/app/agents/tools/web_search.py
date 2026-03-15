@@ -1,4 +1,4 @@
-"""Web search tool using the Tavily API.
+"""Web search tool using the Brave Search API.
 
 Allows the agent to search the web for current information and return
 results with source citations.
@@ -16,58 +16,55 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 
 
-class TavilySearchError(Exception):
-    """Raised when a Tavily API request fails."""
+class BraveSearchError(Exception):
+    """Raised when a Brave Search API request fails."""
 
 
-async def _tavily_search(
+async def _brave_search(
     query: str,
     *,
     max_results: int = 5,
-    search_depth: str = "basic",
-    include_answer: bool = True,
 ) -> dict[str, Any]:
-    """Execute a search request against the Tavily API.
+    """Execute a search request against the Brave Search API.
 
     Parameters
     ----------
     query:
         The search query string.
     max_results:
-        Maximum number of results to return (1-10).
-    search_depth:
-        Either ``"basic"`` (fast) or ``"advanced"`` (thorough).
-    include_answer:
-        Whether to include a generated answer summary.
+        Maximum number of results to return (1-20).
 
     Returns
     -------
     dict
-        Raw response from the Tavily API.
+        Raw response from the Brave Search API.
     """
-    if not settings.tavily_api_key:
-        raise TavilySearchError(
-            "TAVILY_API_KEY is not configured. Set the tavily_api_key environment variable."
+    if not settings.brave_api_key:
+        raise BraveSearchError(
+            "BRAVE_API_KEY is not configured. Set the brave_api_key environment variable."
         )
 
-    payload = {
-        "api_key": settings.tavily_api_key,
-        "query": query,
-        "max_results": min(max_results, 10),
-        "search_depth": search_depth,
-        "include_answer": include_answer,
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": settings.brave_api_key,
+    }
+
+    params = {
+        "q": query,
+        "count": min(max_results, 20),
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(TAVILY_SEARCH_URL, json=payload)
+        response = await client.get(BRAVE_SEARCH_URL, headers=headers, params=params)
 
     if response.status_code != 200:
-        logger.error("Tavily API error: %s %s", response.status_code, response.text)
-        raise TavilySearchError(
-            f"Tavily API returned status {response.status_code}: {response.text}"
+        logger.error("Brave Search API error: %s %s", response.status_code, response.text)
+        raise BraveSearchError(
+            f"Brave Search API returned status {response.status_code}: {response.text}"
         )
 
     result: dict[str, Any] = response.json()
@@ -75,18 +72,14 @@ async def _tavily_search(
 
 
 def _format_results(raw: dict[str, Any]) -> str:
-    """Format Tavily API results into a readable string with citations.
+    """Format Brave Search API results into a readable string with citations.
 
     Returns a structured text block the LLM can use to compose a cited answer.
     """
     parts: list[str] = []
 
-    # Include the generated answer summary if available
-    answer = raw.get("answer")
-    if answer:
-        parts.append(f"**Summary:** {answer}\n")
-
-    results = raw.get("results", [])
+    web = raw.get("web", {})
+    results = web.get("results", [])
     if not results:
         return "No web results found for the given query."
 
@@ -94,7 +87,7 @@ def _format_results(raw: dict[str, Any]) -> str:
     for idx, result in enumerate(results, 1):
         title = result.get("title", "Untitled")
         url = result.get("url", "")
-        snippet = result.get("content", "")
+        snippet = result.get("description", "")
         # Truncate long snippets
         if len(snippet) > 500:
             snippet = snippet[:497] + "..."
@@ -113,12 +106,12 @@ async def web_search(query: str, max_results: int = 5) -> str:
 
     Args:
         query: The search query string describing what to look up.
-        max_results: Number of results to return (1-10, default 5).
+        max_results: Number of results to return (1-20, default 5).
     """
     try:
-        raw = await _tavily_search(query, max_results=max_results)
+        raw = await _brave_search(query, max_results=max_results)
         return _format_results(raw)
-    except TavilySearchError as exc:
+    except BraveSearchError as exc:
         logger.warning("Web search failed: %s", exc)
         return f"Web search error: {exc}"
     except Exception as exc:

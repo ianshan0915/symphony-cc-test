@@ -86,6 +86,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup and shutdown hooks."""
     # ----- Startup -----
     logger.info("Starting Symphony API v%s", settings.app_version)
+    if settings.debug:
+        from app.db.base import Base
+        import app.models  # noqa: F401 — ensure all models are registered
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Debug mode: auto-created database tables")
     await setup_persistent_backends()
     _ = agent_service.agent
     yield
