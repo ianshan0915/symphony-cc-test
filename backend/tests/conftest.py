@@ -143,14 +143,20 @@ async def client(db_session: AsyncSession, test_user: User) -> AsyncIterator[Asy
 @pytest.fixture
 async def unauthed_client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """HTTP test client without auth override (for testing 401 responses)."""
+    from app.config import settings
 
     async def _override_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db_session] = _override_db_session
 
+    # Ensure debug mode is off so unauthenticated requests are rejected.
+    original_debug = settings.debug
+    settings.debug = False
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
+    settings.debug = original_debug
     app.dependency_overrides.clear()
