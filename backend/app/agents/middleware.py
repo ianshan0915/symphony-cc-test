@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _memory_store: Any | None = None
 _checkpointer: Any | None = None
+_checkpointer_pool: Any | None = None
 
 # Track whether we are using persistent (Postgres) backends
 _using_persistent_store: bool = False
@@ -50,7 +51,7 @@ async def setup_persistent_backends() -> None:
     failure the function silently falls back to in-memory backends so
     the application can still run (useful in CI / local-dev without PG).
     """
-    global _memory_store, _checkpointer
+    global _memory_store, _checkpointer, _checkpointer_pool
     global _using_persistent_store, _using_persistent_checkpointer
 
     conn_string = settings.database_url_psycopg
@@ -76,12 +77,19 @@ async def setup_persistent_backends() -> None:
     # --- Checkpointer ---
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg_pool import AsyncConnectionPool
 
-        saver = AsyncPostgresSaver.from_conn_string(conn_string)
-        _checkpointer = await saver.__aenter__()
+        _checkpointer_pool = AsyncConnectionPool(
+            conn_string,
+            min_size=1,
+            max_size=settings.db_pool_size,
+            open=False,
+        )
+        await _checkpointer_pool.open()
+        _checkpointer = AsyncPostgresSaver(_checkpointer_pool)
         await _checkpointer.setup()
         _using_persistent_checkpointer = True
-        logger.info("Persistent AsyncPostgresSaver initialised")
+        logger.info("Persistent AsyncPostgresSaver initialised (pooled)")
     except Exception:
         logger.warning(
             "Failed to initialise AsyncPostgresSaver — falling back to MemorySaver",
@@ -93,7 +101,7 @@ async def setup_persistent_backends() -> None:
 
 async def teardown_persistent_backends() -> None:
     """Gracefully close persistent backends (called at shutdown)."""
-    global _memory_store, _checkpointer
+    global _memory_store, _checkpointer, _checkpointer_pool
 
     if _using_persistent_store and _memory_store is not None:
         try:
@@ -102,15 +110,16 @@ async def teardown_persistent_backends() -> None:
         except Exception:
             logger.warning("Error closing AsyncPostgresStore", exc_info=True)
 
-    if _using_persistent_checkpointer and _checkpointer is not None:
+    if _using_persistent_checkpointer and _checkpointer_pool is not None:
         try:
-            await _checkpointer.__aexit__(None, None, None)
-            logger.info("AsyncPostgresSaver closed")
+            await _checkpointer_pool.close()
+            logger.info("AsyncPostgresSaver connection pool closed")
         except Exception:
-            logger.warning("Error closing AsyncPostgresSaver", exc_info=True)
+            logger.warning("Error closing AsyncPostgresSaver pool", exc_info=True)
 
     _memory_store = None
     _checkpointer = None
+    _checkpointer_pool = None
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +163,9 @@ def reset_memory_store() -> None:
 
 def reset_checkpointer() -> None:
     """Reset the checkpointer (primarily for testing)."""
-    global _checkpointer, _using_persistent_checkpointer
+    global _checkpointer, _checkpointer_pool, _using_persistent_checkpointer
     _checkpointer = None
+    _checkpointer_pool = None
     _using_persistent_checkpointer = False
     logger.info("Checkpointer reset")
 

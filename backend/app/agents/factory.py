@@ -83,6 +83,8 @@ def _configure_langsmith() -> None:
         os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         os.environ.setdefault("LANGCHAIN_API_KEY", settings.langchain_api_key)
         os.environ.setdefault("LANGCHAIN_PROJECT", settings.langchain_project)
+        if settings.langchain_endpoint:
+            os.environ.setdefault("LANGCHAIN_ENDPOINT", settings.langchain_endpoint)
         logger.info(
             "LangSmith tracing enabled for project '%s'",
             settings.langchain_project,
@@ -112,12 +114,14 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
                 "langchain-anthropic is required for Anthropic models. "
                 "Install it with: pip install langchain-anthropic"
             ) from exc
-        return ChatAnthropic(  # type: ignore[no-any-return]
-            model=model,
-            anthropic_api_key=settings.anthropic_api_key or None,
-            streaming=True,
-            **kwargs,
-        )
+        anthropic_kwargs: dict[str, Any] = {
+            "model": model,
+            "anthropic_api_key": settings.anthropic_api_key or None,
+            "streaming": True,
+        }
+        if settings.anthropic_base_url:
+            anthropic_kwargs["anthropic_api_url"] = settings.anthropic_base_url
+        return ChatAnthropic(**(anthropic_kwargs | kwargs))  # type: ignore[no-any-return]
 
     # Default to OpenAI-compatible models
     try:
@@ -127,12 +131,14 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
             "langchain-openai is required for OpenAI models. "
             "Install it with: pip install langchain-openai"
         ) from exc
-    return ChatOpenAI(
-        model=model,
-        api_key=settings.openai_api_key or None,  # type: ignore[arg-type]
-        streaming=True,
-        **kwargs,
-    )
+    openai_kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": settings.openai_api_key or None,  # type: ignore[arg-type]
+        "streaming": True,
+    }
+    if settings.openai_base_url:
+        openai_kwargs["base_url"] = settings.openai_base_url
+    return ChatOpenAI(**(openai_kwargs | kwargs))
 
 
 # ---------------------------------------------------------------------------

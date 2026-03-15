@@ -463,6 +463,7 @@ function processSSEEvent(
         name: approvalRequest.toolName,
         args: approvalRequest.toolArgs,
         status: "awaiting_approval" as const,
+        runId: approvalRequest.runId,
       };
 
       const updatedCalls = [...currentToolCalls, approvalToolCall];
@@ -536,8 +537,9 @@ function processSSEEvent(
       const output = data.output as string;
 
       // Update the matching tool call with the result
+      // Match by id, name, or runId (needed for approval-required tools whose id is the approval_id)
       const updatedCalls = currentToolCalls.map((tc) =>
-        tc.id === runId || tc.name === runId
+        tc.id === runId || tc.name === runId || tc.runId === runId
           ? { ...tc, result: output, status: "completed" as const }
           : tc
       );
@@ -550,19 +552,31 @@ function processSSEEvent(
         )
       );
 
-      // Update task
-      handlers.setTasks((prev) =>
-        prev.map((t) =>
-          t.id === runId
-            ? {
-                ...t,
-                status: "completed" as const,
-                result: output,
-                completedAt: new Date().toISOString(),
-              }
-            : t
-        )
-      );
+      // Update task — match by runId, approval_id, or first in-progress task with matching tool name
+      const matchedToolCall = currentToolCalls.find((tc) => tc.runId === runId);
+      const matchedApprovalId = matchedToolCall?.id;
+      const matchedToolName = matchedToolCall?.name;
+      handlers.setTasks((prev) => {
+        let matched = false;
+        const updated = prev.map((t) => {
+          if (t.id === runId || t.id === matchedApprovalId) {
+            matched = true;
+            return { ...t, status: "completed" as const, result: output, completedAt: new Date().toISOString() };
+          }
+          return t;
+        });
+        if (matched) return updated;
+        // Fallback: match first in-progress task with same tool name
+        let fallbackMatched = false;
+        return prev.map((t) => {
+          if (!fallbackMatched && matchedToolName && t.toolName === matchedToolName &&
+              (t.status === "in_progress" || t.status === "awaiting_approval")) {
+            fallbackMatched = true;
+            return { ...t, status: "completed" as const, result: output, completedAt: new Date().toISOString() };
+          }
+          return t;
+        });
+      });
 
       // Update file operation
       handlers.setFileOps((prev) =>
