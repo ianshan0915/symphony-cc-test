@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.assistant import Assistant, AssistantCreate, AssistantUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class AssistantService:
@@ -93,3 +96,73 @@ class AssistantService:
         assistant.is_active = False
         await self._session.commit()
         return True
+
+    async def count(self, *, active_only: bool = True) -> int:
+        """Return the total number of assistants."""
+        query = select(func.count()).select_from(Assistant)
+        if active_only:
+            query = query.where(Assistant.is_active.is_(True))
+        result = await self._session.execute(query)
+        return result.scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# Default assistant seed data
+# ---------------------------------------------------------------------------
+
+DEFAULT_ASSISTANTS: list[dict[str, object]] = [
+    {
+        "name": "General Assistant",
+        "description": "A general-purpose AI assistant that can help with a wide range of tasks.",
+        "type": "general",
+    },
+    {
+        "name": "Researcher",
+        "description": "An expert research assistant focused on web search, fact-finding, and citation.",
+        "type": "researcher",
+    },
+    {
+        "name": "Coder",
+        "description": "An expert software engineering assistant for writing, reviewing, and debugging code.",
+        "type": "coder",
+    },
+    {
+        "name": "Writer",
+        "description": "An expert writing assistant for content creation, editing, and refinement.",
+        "type": "writer",
+    },
+]
+
+
+async def seed_default_assistants(session: AsyncSession) -> None:
+    """Create default assistants if the assistants table is empty.
+
+    This is called once at application startup to ensure new deployments
+    have a usable set of assistants in the dropdown selector.
+    """
+    from app.agents.prompts import AGENT_PROMPT_REGISTRY
+
+    svc = AssistantService(session)
+    existing = await svc.count(active_only=False)
+    if existing > 0:
+        logger.debug("Assistants table already has %d rows — skipping seed", existing)
+        return
+
+    logger.info("Seeding %d default assistants", len(DEFAULT_ASSISTANTS))
+    for entry in DEFAULT_ASSISTANTS:
+        agent_type = str(entry["type"])
+        registry_entry = AGENT_PROMPT_REGISTRY.get(agent_type, {})
+        system_prompt: str | None = registry_entry.get("system_prompt")  # type: ignore[assignment]
+        tools: list[str] = registry_entry.get("tools") or []  # type: ignore[assignment]
+
+        data = AssistantCreate(
+            name=str(entry["name"]),
+            description=str(entry["description"]),
+            system_prompt=system_prompt,
+            tools_enabled=tools,
+            metadata={"agent_type": agent_type, "is_default": True},
+        )
+        assistant = await svc.create(data)
+        logger.info("Seeded assistant %r (id=%s)", assistant.name, assistant.id)
+
+    logger.info("Default assistant seeding complete")
