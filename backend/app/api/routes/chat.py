@@ -33,6 +33,10 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., min_length=1, max_length=32_000, description="User message text")
     model: str | None = Field(default=None, description="Optional model override")
+    assistant_id: str | None = Field(
+        default=None,
+        description="Assistant UUID to associate the thread with",
+    )
     assistant_type: str | None = Field(
         default=None,
         description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
