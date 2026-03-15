@@ -87,8 +87,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ----- Startup -----
     logger.info("Starting Symphony API v%s", settings.app_version)
     if settings.debug:
-        from app.db.base import Base
         import app.models  # noqa: F401 — ensure all models are registered
+        from app.db.base import Base
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

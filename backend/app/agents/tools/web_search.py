@@ -53,7 +53,7 @@ async def _brave_search(
         "X-Subscription-Token": settings.brave_api_key,
     }
 
-    params = {
+    params: dict[str, str | int] = {
         "q": query,
         "count": min(max_results, 20),
     }
