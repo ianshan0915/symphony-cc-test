@@ -196,7 +196,7 @@ def build_agent_kwargs(
     """Build keyword arguments for agent invocation with memory support.
 
     Returns a dict suitable for passing as ``config`` to the compiled
-    agent's ``.ainvoke()`` or ``.astream_events()`` methods.
+    agent's ``.ainvoke()`` or ``.astream()`` methods.
 
     Parameters
     ----------

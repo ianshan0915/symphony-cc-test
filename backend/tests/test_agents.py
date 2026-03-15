@@ -63,13 +63,13 @@ class TestAgentFactory:
         mock_model.return_value = mock_llm
         mock_agent = MagicMock()
         mock_agent.ainvoke = MagicMock()
-        mock_agent.astream_events = MagicMock()
+        mock_agent.astream = MagicMock()
         mock_da_create.return_value = mock_agent
 
         agent = create_deep_agent()
         assert agent is not None
         assert hasattr(agent, "ainvoke")
-        assert hasattr(agent, "astream_events")
+        assert hasattr(agent, "astream")
         mock_da_create.assert_called_once()
 
     @patch("app.agents.factory._deepagents_create")

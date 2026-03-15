@@ -272,9 +272,9 @@ class TestAgentService:
         """If the agent raises, an error SSE event should be emitted."""
         svc = AgentService()
 
-        # Create a mock agent whose astream_events raises
+        # Create a mock agent whose astream raises
         mock_agent = AsyncMock()
-        mock_agent.astream_events = AsyncMock(side_effect=RuntimeError("LLM down"))
+        mock_agent.astream = AsyncMock(side_effect=RuntimeError("LLM down"))
         svc.set_agent(mock_agent)
 
         events: list[SSEEvent] = []
