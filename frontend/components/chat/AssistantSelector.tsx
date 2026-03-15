@@ -24,6 +24,7 @@ export interface AssistantConfig {
   description: string | null;
   model: string;
   tools_enabled: string[];
+  metadata: Record<string, unknown>;
   is_active: boolean;
 }
 
@@ -90,9 +91,12 @@ export function AssistantSelector({
           );
           setAssistants(active);
 
-          // Auto-select the first assistant if nothing selected yet
+          // Auto-select the default assistant, falling back to the first one
           if (!selectedId && active.length > 0) {
-            onSelect(active[0]);
+            const defaultAssistant = active.find(
+              (a) => a.metadata?.is_default === true,
+            );
+            onSelect(defaultAssistant ?? active[0]);
           }
         }
       } catch (err) {
@@ -107,6 +111,7 @@ export function AssistantSelector({
             description: "General-purpose chat assistant",
             model: "gpt-4o",
             tools_enabled: [],
+            metadata: { is_default: true },
             is_active: true,
           };
           setAssistants([fallback]);

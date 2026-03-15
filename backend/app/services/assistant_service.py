@@ -63,10 +63,15 @@ class AssistantService:
         total_result = await self._session.execute(count_query)
         total = total_result.scalar_one()
 
-        # Fetch page
+        # Fetch page ordered by creation date
         query = base_query.order_by(Assistant.created_at.desc()).offset(offset).limit(limit)
         result = await self._session.execute(query)
         assistants = list(result.scalars().all())
+
+        # Sort default assistants first (stable sort preserves created_at order)
+        assistants.sort(
+            key=lambda a: (0 if (a.metadata_ or {}).get("is_default") is True else 1),
+        )
 
         return assistants, total
 

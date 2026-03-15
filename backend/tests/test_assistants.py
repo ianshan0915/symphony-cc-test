@@ -90,6 +90,36 @@ async def test_list_assistants_pagination(client: AsyncClient):
     assert len(data["assistants"]) == 2
 
 
+@pytest.mark.asyncio
+async def test_list_assistants_default_first(client: AsyncClient):
+    """The assistant marked with is_default should appear first in the list."""
+    # Create a non-default assistant first
+    await client.post(
+        "/assistants",
+        json={"name": "Regular", "metadata": {"is_default": False}},
+    )
+    # Create a second non-default assistant
+    await client.post(
+        "/assistants",
+        json={"name": "Another Regular", "metadata": {}},
+    )
+    # Create the default assistant last (newest created_at)
+    await client.post(
+        "/assistants",
+        json={"name": "The Default", "metadata": {"is_default": True}},
+    )
+
+    response = await client.get("/assistants")
+    data = response.json()
+    assert data["total"] == 3
+    # The default assistant should be first regardless of creation order
+    first = data["assistants"][0]
+    assert first["name"] == "The Default"
+    # metadata may be serialized as "metadata" or "metadata_" depending on config
+    meta = first.get("metadata") or first.get("metadata_") or {}
+    assert meta.get("is_default") is True
+
+
 # ---------------------------------------------------------------------------
 # GET /assistants/{id}
 # ---------------------------------------------------------------------------
