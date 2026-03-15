@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.deps import RateLimiter
+from app.api.deps import RateLimiter, set_request_user_id
 
 
 @pytest.fixture
@@ -98,3 +99,32 @@ async def test_rate_limiter_uses_user_id_when_available(limiter):
         # Verify the key includes user-123
         call_args = mock_pipe.zremrangebyscore.call_args
         assert "user-123" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# set_request_user_id dependency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_request_user_id_populates_state():
+    """set_request_user_id should copy user.id onto request.state."""
+    request = MagicMock()
+    request.state = MagicMock(spec=[])
+
+    user = MagicMock()
+    user.id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    await set_request_user_id(request, user)
+
+    assert request.state.user_id == str(user.id)
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_strict_has_lower_limit():
+    """rate_limiter_strict should allow fewer requests than the default."""
+    from app.api.deps import rate_limiter as rl_default
+    from app.api.deps import rate_limiter_strict as rl_strict
+
+    assert rl_strict.max_requests < rl_default.max_requests
+    assert rl_strict.key_prefix != rl_default.key_prefix
