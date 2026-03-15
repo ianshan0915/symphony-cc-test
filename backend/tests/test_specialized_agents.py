@@ -337,9 +337,7 @@ class TestFactoryWithAssistantType:
 
     @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_coder_agent(
-        self, mock_model: MagicMock, mock_da_create: MagicMock
-    ) -> None:
+    def test_create_coder_agent(self, mock_model: MagicMock, mock_da_create: MagicMock) -> None:
         mock_model.return_value = MagicMock()
         mock_da_create.return_value = MagicMock()
 
@@ -349,9 +347,7 @@ class TestFactoryWithAssistantType:
 
     @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_create_writer_agent(
-        self, mock_model: MagicMock, mock_da_create: MagicMock
-    ) -> None:
+    def test_create_writer_agent(self, mock_model: MagicMock, mock_da_create: MagicMock) -> None:
         mock_model.return_value = MagicMock()
         mock_da_create.return_value = MagicMock()
 
