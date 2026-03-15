@@ -7,7 +7,7 @@ Settings model without raising ``ValidationError``.
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
+from pydantic import ValidationError  # noqa: F401 — referenced in docstrings
 
 
 def test_settings_accepts_langsmith_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
