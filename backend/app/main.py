@@ -3,7 +3,7 @@
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import timezone
@@ -119,7 +119,7 @@ app.add_middleware(
 @app.middleware("http")
 async def request_id_middleware(
     request: Request,
-    call_next: Callable[[Request], Coroutine[Any, Any, Response]],
+    call_next: Callable[..., Any],
 ) -> Response:
     """Inject a unique request ID into every request/response cycle.
 
