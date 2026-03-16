@@ -196,6 +196,7 @@ def create_deep_agent(
     model_name: str | None = None,
     tools: Sequence[BaseTool] | None = None,
     system_prompt: str | None = None,
+    custom_system_prompt: str | None = None,
     assistant_type: str | None = None,
     skills: list[str] | None = None,
     extra_skill_dirs: list[str] | None = None,
@@ -216,6 +217,10 @@ def create_deep_agent(
         registered tools if no type is specified.
     system_prompt:
         Explicit system prompt override. Takes precedence over ``assistant_type``.
+    custom_system_prompt:
+        User-provided custom system prompt. Layered on top of (not replacing)
+        the resolved system prompt from skills/assistant_type. Appended after
+        the main prompt.
     assistant_type:
         Agent specialization type (``"researcher"``, ``"coder"``, ``"writer"``,
         or ``"general"``). Determines the system prompt and default tool set.
@@ -255,6 +260,10 @@ def create_deep_agent(
         prompt = _get_agent_type_prompt(assistant_type)
     else:
         prompt = GENERAL_SYSTEM_PROMPT
+
+    # Layer custom system prompt on top of the resolved prompt
+    if custom_system_prompt:
+        prompt = prompt + "\n\n" + custom_system_prompt
 
     # Resolve tools
     agent_tools = _resolve_tools(tools, assistant_type)

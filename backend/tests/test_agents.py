@@ -289,7 +289,6 @@ class TestThreadMetadataForAgents:
             metadata={
                 "agent_type": "research",
                 "model": "gpt-4o",
-                "temperature": 0.7,
                 "tools": ["search", "calculator"],
             },
         )
