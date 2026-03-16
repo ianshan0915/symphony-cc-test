@@ -13,7 +13,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from langgraph.store.memory import InMemoryStore
 
 import app.agents.middleware as mw
@@ -25,8 +25,6 @@ from app.agents.middleware import (
     get_agents_md,
     set_agents_md,
 )
-from app.main import app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
