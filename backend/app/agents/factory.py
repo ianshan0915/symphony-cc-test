@@ -25,6 +25,7 @@ from app.agents.prompts import (
     get_tools_for_agent_type,
 )
 from app.agents.skills import resolve_skill_paths
+from app.agents.subagents import build_subagent_configs
 from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
@@ -203,6 +204,8 @@ def create_deep_agent(
     checkpointer: Any | None = None,
     store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
+    subagents: list[dict[str, Any]] | None = None,
+    enable_subagents: bool = True,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -242,6 +245,16 @@ def create_deep_agent(
         otherwise ``InMemoryStore``).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
+    subagents:
+        Explicit list of subagent configuration dicts to pass to the
+        ``deepagents`` framework.  Each dict should have ``name``,
+        ``model``, ``system_prompt``, and ``tools`` keys.  When ``None``
+        (default) and *enable_subagents* is ``True``, default subagent
+        configs for researcher, coder, and writer are built automatically.
+    enable_subagents:
+        Whether to attach subagent configurations to the supervisor agent.
+        Defaults to ``True``.  Set to ``False`` to create a standalone
+        agent without delegation capabilities (backwards-compatible mode).
 
     Returns
     -------
@@ -278,12 +291,24 @@ def create_deep_agent(
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
+    # Resolve subagent configurations
+    resolved_subagents: list[dict[str, Any]] | None = None
+    if subagents is not None:
+        resolved_subagents = subagents
+    elif enable_subagents:
+        resolved_subagents = build_subagent_configs(
+            model_name=model_name,
+            model_kwargs=model_kwargs,
+        )
+
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, checkpointer=%s, store=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
+        "subagents=%d, checkpointer=%s, store=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
         len(skill_paths),
+        len(resolved_subagents) if resolved_subagents else 0,
         type(saver).__name__,
         type(memory_store).__name__,
     )
@@ -299,6 +324,11 @@ def create_deep_agent(
     # Pass skills to deepagents if any were resolved
     if skill_paths:
         create_kwargs["skills"] = skill_paths
+
+    # Pass subagent configs — the framework automatically provides a `task` tool
+    # to the supervisor agent for delegating work to subagents
+    if resolved_subagents:
+        create_kwargs["subagents"] = resolved_subagents
 
     agent = _deepagents_create(**create_kwargs)
 

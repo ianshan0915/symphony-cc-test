@@ -27,6 +27,7 @@ from langgraph.types import Command
 
 from app.agents.deepagents_adapter import (
     extract_interrupt,
+    extract_subagent_namespace,
     map_message_chunk,
     map_state_update,
 )
@@ -146,23 +147,40 @@ class AgentService:
         active_agent: CompiledStateGraph,  # type: ignore[type-arg]
         agent_input: Any,
         config: dict[str, Any],
-    ) -> AsyncIterator[tuple[str, Any]]:
-        """Iterate over agent ``astream()`` with dual stream modes.
+    ) -> AsyncIterator[tuple[str, Any, tuple[str, ...] | None]]:
+        """Iterate over agent ``astream()`` with V2 streaming and subgraph support.
 
-        Yields ``(mode, chunk)`` pairs where *mode* is ``"messages"`` or
-        ``"updates"`` and *chunk* is the raw LangGraph payload.
+        Yields ``(mode, chunk, namespace)`` triples where *mode* is
+        ``"messages"`` or ``"updates"``, *chunk* is the raw LangGraph
+        payload, and *namespace* is the subagent namespace tuple (or
+        ``None`` for supervisor-level events).
+
+        V2 streaming with ``subgraphs=True`` emits events from both
+        the supervisor and its subagents.  The ``ns`` field on each
+        event identifies which subagent produced it (e.g.
+        ``("researcher:abc123",)``).
         """
-        async for chunk in active_agent.astream(
+        async for event in active_agent.astream(
             agent_input,
             config=config,  # type: ignore[call-overload]
             stream_mode=["messages", "updates"],
+            subgraphs=True,
+            version="v2",
         ):
-            # With multiple stream modes, each chunk is a (mode, payload) tuple
-            if isinstance(chunk, tuple) and len(chunk) == 2:
-                yield chunk  # type: ignore[misc, unused-ignore]
+            # V2 events have an `ns` attribute for the subagent namespace
+            ns: tuple[str, ...] | None = getattr(event, "ns", None)
+
+            # V2 events also carry `mode` and `data` attributes
+            if hasattr(event, "event") and hasattr(event, "data"):
+                mode = event.event  # type: ignore[union-attr]
+                chunk = event.data  # type: ignore[union-attr]
+                yield (mode, chunk, ns)
+            elif isinstance(event, tuple) and len(event) == 2:
+                # Fallback for v1-style (mode, payload) tuples
+                mode_str, payload = event
+                yield (str(mode_str), payload, ns)
             else:
-                # Fallback: treat as updates mode
-                yield ("updates", chunk)
+                yield ("updates", event, None)
 
     # ------------------------------------------------------------------
     # Main streaming interface
@@ -221,13 +239,27 @@ class AgentService:
 
         full_content = ""
         tool_calls_data: list[dict[str, Any]] = []
+        # Track active subagent namespaces to emit start/end events
+        active_subagents: set[str] = set()
 
         try:
             # Stream with potential interrupt/resume loop
             while True:
                 interrupt_data: dict[str, Any] | None = None
 
-                async for mode, chunk in self._stream_agent(active_agent, agent_input, config):
+                async for mode, chunk, ns in self._stream_agent(active_agent, agent_input, config):
+                    # Detect subagent namespace and emit lifecycle events
+                    subagent_name = extract_subagent_namespace(ns) if ns else None
+                    if subagent_name and subagent_name not in active_subagents:
+                        active_subagents.add(subagent_name)
+                        yield SSEEvent(
+                            event="sub_agent_start",
+                            data={
+                                "subagent_name": subagent_name,
+                                "thread_id": thread_id,
+                            },
+                        )
+
                     if mode == "messages":
                         # chunk is a (message, metadata) tuple in messages mode
                         if isinstance(chunk, tuple) and len(chunk) == 2:
@@ -236,18 +268,52 @@ class AgentService:
                             msg_chunk, metadata = chunk, {}
 
                         for sse_event in map_message_chunk(msg_chunk, metadata):
-                            if sse_event.event == "token":
-                                full_content += sse_event.data.get("token", "")
-                            elif sse_event.event == "tool_call":
-                                tool_calls_data.append(sse_event.data)
-                            yield sse_event
+                            if subagent_name:
+                                # Tag subagent events with progress type
+                                yield SSEEvent(
+                                    event="sub_agent_progress",
+                                    data={
+                                        "subagent_name": subagent_name,
+                                        "thread_id": thread_id,
+                                        "inner_event": sse_event.event,
+                                        **sse_event.data,
+                                    },
+                                )
+                            else:
+                                if sse_event.event == "token":
+                                    full_content += sse_event.data.get("token", "")
+                                elif sse_event.event == "tool_call":
+                                    tool_calls_data.append(sse_event.data)
+                                yield sse_event
 
                     elif mode == "updates":
                         # Check for interrupt (human-in-the-loop)
                         if isinstance(chunk, dict):
                             interrupt_data = extract_interrupt(chunk)
                             for sse_event in map_state_update(chunk):
-                                yield sse_event
+                                if subagent_name:
+                                    yield SSEEvent(
+                                        event="sub_agent_progress",
+                                        data={
+                                            "subagent_name": subagent_name,
+                                            "thread_id": thread_id,
+                                            "inner_event": sse_event.event,
+                                            **sse_event.data,
+                                        },
+                                    )
+                                else:
+                                    yield sse_event
+
+                # Emit sub_agent_end for any active subagents
+                for sa_name in active_subagents:
+                    yield SSEEvent(
+                        event="sub_agent_end",
+                        data={
+                            "subagent_name": sa_name,
+                            "thread_id": thread_id,
+                        },
+                    )
+                active_subagents.clear()
 
                 # If no interrupt, we're done streaming
                 if interrupt_data is None:
