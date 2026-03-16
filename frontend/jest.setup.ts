@@ -10,6 +10,11 @@
 // Node.js built-ins to the global scope, so we polyfill them here.
 if (typeof globalThis.TextEncoder === "undefined") {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const utils = require("util") as typeof import("util");
+  // Cast through unknown to satisfy strict assignability between Node util
+  // types and the DOM global declarations without @ts-expect-error.
+  (globalThis as unknown as Record<string, unknown>).TextEncoder = utils.TextEncoder;
+  (globalThis as unknown as Record<string, unknown>).TextDecoder = utils.TextDecoder;
   const { TextEncoder, TextDecoder } = require("util") as typeof import("util");
   // @ts-expect-error – assigning Node.js util types to the Web API globals
   globalThis.TextEncoder = TextEncoder;

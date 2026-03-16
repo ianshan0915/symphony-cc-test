@@ -259,6 +259,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setTasks,
                     setFileOps,
                     setSubAgents,
+                    subAgentProgressMap: subAgentProgressRef.current,
                     setMemoryUpdated,
                     updateAssistantContent: (newContent: string) => {
                       assistantContent = newContent;
