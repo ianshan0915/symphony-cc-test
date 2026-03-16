@@ -56,11 +56,19 @@ class ChatRequest(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    """Payload for approving or rejecting a pending tool call."""
+    """Payload for approving, editing, or rejecting a pending tool call."""
 
     thread_id: str = Field(..., description="Thread ID with a pending approval")
-    decision: str = Field(..., pattern="^(approve|reject)$", description="approve or reject")
+    decision: str = Field(
+        ...,
+        pattern="^(approve|edit|reject)$",
+        description="approve, edit, or reject",
+    )
     reason: str | None = Field(default=None, description="Optional reason for rejection")
+    modified_args: dict[str, Any] | None = Field(
+        default=None,
+        description="Modified tool arguments (required when decision is 'edit')",
+    )
 
 
 class ApprovalDecisionResponse(BaseModel):
@@ -81,6 +89,7 @@ class PendingApprovalResponse(BaseModel):
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     run_id: str | None = None
+    allowed_decisions: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -241,24 +250,25 @@ async def chat_stream(
 async def submit_approval_decision(
     body: ApprovalDecisionRequest,
 ) -> ApprovalDecisionResponse:
-    """Submit an approval or rejection decision for a pending tool call.
+    """Submit an approval, edit, or rejection decision for a pending tool call.
 
-    When the agent encounters a tool that requires human approval, the SSE
+    When the agent encounters a tool configured in ``interrupt_on``, the SSE
     stream emits an ``approval_required`` event and pauses execution.  The
-    frontend should call this endpoint to approve or reject the tool call,
-    which unblocks the stream.
+    frontend should call this endpoint to approve, edit, or reject the tool
+    call, which unblocks the stream.
 
     **Request body:**
 
     - ``thread_id`` — the thread with a pending approval
-    - ``decision`` — ``"approve"`` or ``"reject"``
+    - ``decision`` — ``"approve"``, ``"edit"``, or ``"reject"``
     - ``reason`` — optional reason for rejection
+    - ``modified_args`` — modified tool arguments (when decision is ``"edit"``)
     """
-    approved = body.decision == "approve"
-    resolved = await agent_service.resolve_approval(
-        thread_id=body.thread_id,
-        approved=approved,
+    resolved = await agent_service.resolve_interrupt(
+        body.thread_id,
+        decision=body.decision,
         reason=body.reason,
+        modified_args=body.modified_args,
     )
 
     if not resolved:
@@ -267,7 +277,8 @@ async def submit_approval_decision(
             detail=f"No pending approval found for thread {body.thread_id}",
         )
 
-    decision_label = "approved" if approved else "rejected"
+    decision_labels = {"approve": "approved", "edit": "edited", "reject": "rejected"}
+    decision_label = decision_labels.get(body.decision, body.decision)
     return ApprovalDecisionResponse(
         success=True,
         thread_id=body.thread_id,
@@ -292,11 +303,13 @@ async def get_pending_approval(thread_id: str) -> PendingApprovalResponse:
     if pending is None:
         return PendingApprovalResponse(has_pending=False)
 
+    interrupt = pending.interrupt_data
     return PendingApprovalResponse(
         has_pending=True,
         approval_id=pending.approval_id,
         thread_id=pending.thread_id,
-        tool_name=pending.tool_name,
-        tool_args=pending.tool_args,
-        run_id=pending.run_id,
+        tool_name=interrupt.get("tool_name"),
+        tool_args=interrupt.get("tool_args"),
+        run_id=interrupt.get("run_id"),
+        allowed_decisions=interrupt.get("allowed_decisions"),
     )

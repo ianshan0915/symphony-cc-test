@@ -133,14 +133,19 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
     """Extract interrupt data from a LangGraph *updates*-mode payload.
 
-    When a deepagents tool calls ``interrupt()``, the updates stream
-    yields a special ``__interrupt__`` key containing the interrupt value.
+    When deepagents' native ``interrupt_on`` fires (or a tool manually calls
+    ``interrupt()``), the updates stream yields a special ``__interrupt__``
+    key containing the interrupt value.
+
+    The returned dict is normalised to always contain at least
+    ``tool_name`` and ``tool_args``.  Native ``interrupt_on`` payloads may
+    also carry ``allowed_decisions``.
 
     Returns
     -------
     dict | None
-        The interrupt payload (tool_name, tool_args, etc.) or ``None``
-        if the update does not represent an interrupt.
+        The interrupt payload (tool_name, tool_args, allowed_decisions, etc.)
+        or ``None`` if the update does not represent an interrupt.
     """
     interrupts = update.get("__interrupt__")
     if not interrupts:

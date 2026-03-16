@@ -1,10 +1,11 @@
-"""Tests for the refactored agent streaming with deepagents astream() (SYM-65).
+"""Tests for the refactored agent streaming with native interrupt_on (SYM-83).
 
 Covers:
 - Dual stream mode (messages + updates) event mapping
-- Interrupt-based human-in-the-loop approval flow
+- Native interrupt_on human-in-the-loop approval flow
+- Approve, edit, and reject decisions
 - Error handling during streaming
-- Resume after approval/rejection
+- Resume after approval/edit/rejection
 """
 
 from __future__ import annotations
@@ -142,17 +143,16 @@ class TestStreamResponseBasic:
 
 
 # ---------------------------------------------------------------------------
-# Interrupt / approval tests
+# Interrupt / approval tests (native interrupt_on)
 # ---------------------------------------------------------------------------
 
 
 class TestStreamResponseInterrupt:
-    """Tests for the interrupt-based human-in-the-loop flow."""
+    """Tests for the native interrupt_on human-in-the-loop flow."""
 
     @pytest.mark.asyncio
     async def test_interrupt_emits_approval_required(self) -> None:
         """When the graph interrupts, an approval_required event should be emitted."""
-        # First stream ends with interrupt, second stream (resume) completes
         first_chunks: list[tuple[str, Any]] = [
             ("messages", (AIMessageChunk(content="Let me search"), {})),
             (
@@ -188,11 +188,10 @@ class TestStreamResponseInterrupt:
 
         # Auto-approve in a background task
         async def auto_approve() -> None:
-            # Wait until the pending approval appears
             for _ in range(50):
                 pending = svc.get_pending_approval("t1")
                 if pending is not None:
-                    await svc.resolve_approval("t1", approved=True)
+                    await svc.resolve_interrupt("t1", decision="approve")
                     return
                 await asyncio.sleep(0.01)
 
@@ -209,9 +208,77 @@ class TestStreamResponseInterrupt:
 
         approval_evt = next(e for e in events if e.event == "approval_required")
         assert approval_evt.data["tool_name"] == "web_search"
+        assert "allowed_decisions" in approval_evt.data
 
         result_evt = next(e for e in events if e.event == "approval_result")
         assert result_evt.data["decision"] == "approved"
+
+    @pytest.mark.asyncio
+    async def test_interrupt_edit_resumes_with_modified_args(self) -> None:
+        """On edit, the stream should resume with a Command containing modified args."""
+        first_chunks: list[tuple[str, Any]] = [
+            (
+                "updates",
+                {
+                    "__interrupt__": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_args": {"query": "original"},
+                            "run_id": "r1",
+                        }
+                    ]
+                },
+            ),
+        ]
+        resume_chunks: list[tuple[str, Any]] = [
+            ("messages", (AIMessageChunk(content="Searched with improved query!"), {})),
+        ]
+
+        call_count = 0
+        resume_input = None
+        mock_agent = MagicMock()
+
+        async def multi_astream(input: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+            nonlocal call_count, resume_input
+            chunks = first_chunks if call_count == 0 else resume_chunks
+            if call_count > 0:
+                resume_input = input
+            call_count += 1
+            for chunk in chunks:
+                yield chunk
+
+        mock_agent.astream = multi_astream
+        svc = AgentService(agent=mock_agent)
+
+        async def auto_edit() -> None:
+            for _ in range(50):
+                pending = svc.get_pending_approval("t1")
+                if pending is not None:
+                    await svc.resolve_interrupt(
+                        "t1",
+                        decision="edit",
+                        modified_args={"query": "improved"},
+                    )
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(auto_edit())
+
+        events = await _collect_events(svc, thread_id="t1", user_message="search")
+        await task
+
+        event_types = [e.event for e in events]
+        assert "approval_result" in event_types
+
+        result_evt = next(e for e in events if e.event == "approval_result")
+        assert result_evt.data["decision"] == "edited"
+        assert result_evt.data["modified_args"] == {"query": "improved"}
+
+        # Verify the resume was called with Command containing edit info
+        from langgraph.types import Command
+
+        assert isinstance(resume_input, Command)
+        assert resume_input.resume == {"decision": "edit", "tool_args": {"query": "improved"}}
 
     @pytest.mark.asyncio
     async def test_interrupt_rejection_resumes_with_false(self) -> None:
@@ -254,7 +321,7 @@ class TestStreamResponseInterrupt:
             for _ in range(50):
                 pending = svc.get_pending_approval("t1")
                 if pending is not None:
-                    await svc.resolve_approval("t1", approved=False, reason="Not now")
+                    await svc.resolve_interrupt("t1", decision="reject", reason="Not now")
                     return
                 await asyncio.sleep(0.01)
 
@@ -305,7 +372,7 @@ class TestStreamResponseInterrupt:
         async def auto_approve() -> None:
             for _ in range(50):
                 if svc.get_pending_approval("t1"):
-                    await svc.resolve_approval("t1", approved=True)
+                    await svc.resolve_interrupt("t1", decision="approve")
                     return
                 await asyncio.sleep(0.01)
 
@@ -315,6 +382,95 @@ class TestStreamResponseInterrupt:
 
         approval_evt = next(e for e in events if e.event == "approval_required")
         assert approval_evt.data["tool_name"] == "search_knowledge_base"
+
+    @pytest.mark.asyncio
+    async def test_interrupt_approval_required_includes_allowed_decisions(self) -> None:
+        """The approval_required event should include allowed_decisions."""
+        chunks: list[tuple[str, Any]] = [
+            (
+                "updates",
+                {
+                    "__interrupt__": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_args": {"query": "test"},
+                            "run_id": "r1",
+                            "allowed_decisions": ["approve", "edit", "reject"],
+                        }
+                    ]
+                },
+            ),
+        ]
+        resume_chunks: list[tuple[str, Any]] = [
+            ("messages", (AIMessageChunk(content="Done"), {})),
+        ]
+
+        call_count = 0
+        mock_agent = MagicMock()
+
+        async def multi_astream(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            chunks_to_yield = chunks if call_count == 0 else resume_chunks
+            call_count += 1
+            for c in chunks_to_yield:
+                yield c
+
+        mock_agent.astream = multi_astream
+        svc = AgentService(agent=mock_agent)
+
+        async def auto_approve() -> None:
+            for _ in range(50):
+                if svc.get_pending_approval("t1"):
+                    await svc.resolve_interrupt("t1", decision="approve")
+                    return
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(auto_approve())
+        events = await _collect_events(svc, thread_id="t1", user_message="search")
+        await task
+
+        approval_evt = next(e for e in events if e.event == "approval_required")
+        assert approval_evt.data["allowed_decisions"] == ["approve", "edit", "reject"]
+
+
+# ---------------------------------------------------------------------------
+# Resume command building tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildResumeCommand:
+    """Tests for AgentService._build_resume_command."""
+
+    def test_approve_returns_resume_true(self) -> None:
+        from langgraph.types import Command
+
+        cmd = AgentService._build_resume_command({"type": "approve"})
+        assert isinstance(cmd, Command)
+        assert cmd.resume is True
+
+    def test_reject_returns_resume_false(self) -> None:
+        from langgraph.types import Command
+
+        cmd = AgentService._build_resume_command({"type": "reject", "reason": "no"})
+        assert isinstance(cmd, Command)
+        assert cmd.resume is False
+
+    def test_edit_returns_resume_with_args(self) -> None:
+        from langgraph.types import Command
+
+        cmd = AgentService._build_resume_command({
+            "type": "edit",
+            "modified_args": {"query": "better"},
+        })
+        assert isinstance(cmd, Command)
+        assert cmd.resume == {"decision": "edit", "tool_args": {"query": "better"}}
+
+    def test_unknown_type_defaults_to_reject(self) -> None:
+        from langgraph.types import Command
+
+        cmd = AgentService._build_resume_command({"type": "unknown"})
+        assert isinstance(cmd, Command)
+        assert cmd.resume is False
 
 
 # ---------------------------------------------------------------------------

@@ -203,6 +203,7 @@ def create_deep_agent(
     checkpointer: Any | None = None,
     store: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
+    interrupt_on: dict[str, Any] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -242,6 +243,12 @@ def create_deep_agent(
         otherwise ``InMemoryStore``).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
+    interrupt_on:
+        Mapping of tool names to interrupt configurations for human-in-the-loop
+        approval.  Values can be ``True`` (default approve/reject) or a dict
+        with ``{"allowed_decisions": ["approve", "edit", "reject"]}``.
+        When provided, deepagents will automatically interrupt before executing
+        the specified tools and wait for a human decision.
 
     Returns
     -------
@@ -299,6 +306,10 @@ def create_deep_agent(
     # Pass skills to deepagents if any were resolved
     if skill_paths:
         create_kwargs["skills"] = skill_paths
+
+    # Pass interrupt_on for native human-in-the-loop support
+    if interrupt_on is not None:
+        create_kwargs["interrupt_on"] = interrupt_on
 
     agent = _deepagents_create(**create_kwargs)
 
