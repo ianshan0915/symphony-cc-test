@@ -73,6 +73,7 @@ export interface SkillBrief {
 /** Assistant configuration (mirrors backend AssistantOut) */
 export interface AssistantConfig {
   id: string;
+  user_id?: string | null;
   name: string;
   description: string | null;
   model: string;
