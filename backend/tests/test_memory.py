@@ -347,7 +347,8 @@ class TestFactoryMemoryParameter:
         call_kwargs = mock_da_create.call_args.kwargs
         memory_paths = call_kwargs.get("memory", [])
         assert all(p.startswith("/memories/") for p in memory_paths), (
-            f"All memory paths must start with /memories/ for StoreBackend routing; got {memory_paths}"
+            "All memory paths must start with /memories/ for StoreBackend routing; "
+            f"got {memory_paths}"
         )
 
     @patch("app.agents.factory._deepagents_create")
