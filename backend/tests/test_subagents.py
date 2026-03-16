@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +24,6 @@ from app.agents.subagents import (
 )
 from app.services.agent_service import AgentService
 from app.services.sse import SSEEvent
-
 
 # ---------------------------------------------------------------------------
 # Subagent configuration tests
