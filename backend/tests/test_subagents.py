@@ -90,12 +90,22 @@ class TestSubagentConfigs:
             assert isinstance(config["tools"], list)
             assert len(config["tools"]) > 0
 
-    def test_tools_are_strings(self) -> None:
-        """All tool entries in every config should be strings (tool names)."""
+    def test_tools_are_tool_objects(self) -> None:
+        """All tool entries in every config should be BaseTool instances, not strings.
+
+        The deepagents SubAgent spec requires ``tools: Sequence[BaseTool | Callable | dict]``.
+        Passing plain strings causes an AttributeError in ToolNode at construction time.
+        """
+        from langchain_core.tools import BaseTool
+
         configs = build_subagent_configs()
         for config in configs:
             for tool in config["tools"]:
-                assert isinstance(tool, str), f"Expected str tool name, got {type(tool)}"
+                assert isinstance(tool, BaseTool), (
+                    f"Expected BaseTool instance, got {type(tool)!r}. "
+                    "Tool names must be resolved to BaseTool instances before being "
+                    "passed to the deepagents framework."
+                )
 
     def test_empty_subagent_types_falls_back_to_defaults(self) -> None:
         """An empty list is falsy, so it falls back to the default SUBAGENT_TYPES."""
@@ -114,7 +124,13 @@ class TestSubagentConfigs:
         from app.agents.tools import TOOL_REGISTRY
 
         configs = build_subagent_configs(subagent_types=["custom_specialist"])
-        assert set(configs[0]["tools"]) == set(TOOL_REGISTRY.keys())
+        # Tools are returned as BaseTool objects; compare by count and id since
+        # StructuredTool instances are not hashable.
+        tools = configs[0]["tools"]
+        registry_tools = list(TOOL_REGISTRY.values())
+        assert len(tools) == len(registry_tools)
+        tool_ids = {id(t) for t in tools}
+        assert all(id(rt) in tool_ids for rt in registry_tools)
 
     def test_config_name_matches_requested_type(self) -> None:
         """Each config's name field must match its corresponding subagent type."""
