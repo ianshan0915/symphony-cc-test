@@ -7,7 +7,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,7 +122,7 @@ class SkillService:
         await self._session.commit()
         return True
 
-    async def materialize(self, skill_ids: list[uuid.UUID]) -> list[str]:
+    async def materialize(self, skill_ids: list[uuid.UUID]) -> list[str]:  # type: ignore[valid-type]
         """Materialize skills to temporary filesystem directories for deepagents.
 
         Creates a temporary directory structure matching the agentskills.io spec:
