@@ -9,27 +9,45 @@ const mockAssistants = {
   assistants: [
     {
       id: "a1",
+      user_id: null,
       name: "General Assistant",
       description: "General-purpose chat",
       model: "gpt-4o",
+      system_prompt: null,
       tools_enabled: ["web_search", "code_exec"],
+      metadata: {},
+      skills: [{ id: "s1", name: "research", description: "Research skill" }],
       is_active: true,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
     },
     {
       id: "a2",
+      user_id: "user-123",
       name: "Code Assistant",
       description: "Specialized for coding tasks",
       model: "claude-3-opus",
+      system_prompt: null,
       tools_enabled: ["code_exec"],
+      metadata: {},
+      skills: [],
       is_active: true,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
     },
     {
       id: "a3",
+      user_id: null,
       name: "Inactive Bot",
       description: "Should not appear",
       model: "gpt-3.5-turbo",
+      system_prompt: null,
       tools_enabled: [],
+      metadata: {},
+      skills: [],
       is_active: false,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-01T00:00:00Z",
     },
   ],
   total: 3,
@@ -127,7 +145,7 @@ describe("AssistantSelector", () => {
     expect(screen.getByText("claude-3-opus")).toBeInTheDocument();
   });
 
-  it("shows tool count for assistants with tools", async () => {
+  it("shows skill and tool counts for assistants", async () => {
     const user = userEvent.setup();
     render(
       <AssistantSelector selectedId="a1" onSelect={jest.fn()} />,
@@ -140,7 +158,40 @@ describe("AssistantSelector", () => {
     await user.click(screen.getByRole("button", { expanded: false }));
 
     expect(screen.getByText("2 tools")).toBeInTheDocument();
+    expect(screen.getByText("1 skill")).toBeInTheDocument();
     expect(screen.getByText("1 tool")).toBeInTheDocument();
+  });
+
+  it("groups system agents and user agents separately", async () => {
+    const user = userEvent.setup();
+    render(
+      <AssistantSelector selectedId="a1" onSelect={jest.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("General Assistant")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { expanded: false }));
+
+    expect(screen.getByText("System Agents")).toBeInTheDocument();
+    expect(screen.getByText("Your Agents")).toBeInTheDocument();
+  });
+
+  it("shows Create Agent and Manage Skills action buttons", async () => {
+    const user = userEvent.setup();
+    render(
+      <AssistantSelector selectedId="a1" onSelect={jest.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("General Assistant")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { expanded: false }));
+
+    expect(screen.getByText("Create Agent")).toBeInTheDocument();
+    expect(screen.getByText("Manage Skills")).toBeInTheDocument();
   });
 
   it("disables the trigger when disabled prop is true", async () => {
