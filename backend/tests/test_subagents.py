@@ -166,9 +166,7 @@ class TestFactorySubagentIntegration:
 
     @patch("app.agents.factory._deepagents_create")
     @patch("app.agents.factory._get_chat_model")
-    def test_disable_subagents(
-        self, mock_model: MagicMock, mock_da_create: MagicMock
-    ) -> None:
+    def test_disable_subagents(self, mock_model: MagicMock, mock_da_create: MagicMock) -> None:
         """enable_subagents=False should not pass subagents."""
         from app.agents.factory import create_deep_agent
 
