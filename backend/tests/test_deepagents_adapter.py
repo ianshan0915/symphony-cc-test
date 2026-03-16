@@ -106,12 +106,35 @@ class TestMapStateUpdate:
         assert len(events) == 1
         assert events[0].data["run_id"] == "call_2"
 
-    def test_long_output_is_truncated(self) -> None:
+    def test_long_output_is_not_truncated(self) -> None:
+        """With CompositeBackend offloading, large outputs are passed through."""
         long_content = "x" * 3000
         tool_msg = ToolMessage(content=long_content, tool_call_id="call_3")
         update: dict[str, Any] = {"tools": {"messages": [tool_msg]}}
         events = map_state_update(update)
-        assert len(events[0].data["output"]) == 2000
+        assert len(events[0].data["output"]) == 3000
+
+    def test_filesystem_tool_emits_file_event(self) -> None:
+        """Native filesystem tools produce both file_event and tool_result."""
+        tool_msg = ToolMessage(
+            content="file contents here", tool_call_id="call_4", name="read_file"
+        )
+        update: dict[str, Any] = {"tools": {"messages": [tool_msg]}}
+        events = map_state_update(update)
+        assert len(events) == 2
+        assert events[0].event == "file_event"
+        assert events[0].data["tool_name"] == "read_file"
+        assert events[0].data["output"] == "file contents here"
+        assert events[1].event == "tool_result"
+        assert events[1].data["run_id"] == "call_4"
+
+    def test_non_filesystem_tool_no_file_event(self) -> None:
+        """Non-filesystem tools should only produce tool_result (no file_event)."""
+        tool_msg = ToolMessage(content="search results", tool_call_id="call_5", name="web_search")
+        update: dict[str, Any] = {"tools": {"messages": [tool_msg]}}
+        events = map_state_update(update)
+        assert len(events) == 1
+        assert events[0].event == "tool_result"
 
 
 # ---------------------------------------------------------------------------

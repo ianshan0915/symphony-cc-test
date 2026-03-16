@@ -6,6 +6,10 @@ event vocabulary expected by the frontend (``ChatInterface.tsx``):
 * **messages** mode → ``token``, ``tool_call`` SSE events
 * **updates** mode → ``tool_result`` SSE events, plus interrupt detection
 
+Filesystem events from native filesystem tools (backed by
+``CompositeBackend``) are also mapped to ``file_event`` SSE events so the
+frontend can display file operations inline.
+
 This module is intentionally stateless — all state lives in
 :class:`~app.services.agent_service.AgentService`.
 """
@@ -20,6 +24,21 @@ from langchain_core.messages import AIMessageChunk, ToolMessage
 from app.services.sse import SSEEvent
 
 logger = logging.getLogger(__name__)
+
+# Native filesystem tool names provided by deepagents when a backend is
+# configured.  Used to emit ``file_event`` SSE events alongside the
+# standard ``tool_result`` so the frontend can render file operations.
+_FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,12 +131,33 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         for msg in messages:
             if isinstance(msg, ToolMessage):
+                content = str(msg.content)
+                tool_name = getattr(msg, "name", None) or ""
+
+                # Emit file_event for native filesystem tool results so the
+                # frontend can render file operations inline.
+                if tool_name in _FILESYSTEM_TOOL_NAMES:
+                    events.append(
+                        SSEEvent(
+                            event="file_event",
+                            data={
+                                "run_id": getattr(msg, "tool_call_id", ""),
+                                "tool_name": tool_name,
+                                "output": content,
+                            },
+                        )
+                    )
+
+                # With CompositeBackend, deepagents offloads large tool
+                # outputs to the filesystem automatically (returning a
+                # pointer instead of inline content).  The blunt 2K
+                # truncation is therefore no longer needed.
                 events.append(
                     SSEEvent(
                         event="tool_result",
                         data={
                             "run_id": getattr(msg, "tool_call_id", ""),
-                            "output": str(msg.content)[:2000],
+                            "output": content,
                         },
                     )
                 )
