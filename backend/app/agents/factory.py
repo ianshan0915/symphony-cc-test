@@ -283,6 +283,8 @@ def create_deep_agent(
         configs for researcher, coder, and writer are built automatically.
     enable_subagents:
         Whether to attach subagent configurations to the supervisor agent.
+        Defaults to ``True``.  Set to ``False`` to create a standalone
+        agent without delegation capabilities (backwards-compatible mode).
     interrupt_on:
         Tool names that should trigger a human-in-the-loop interrupt before
         execution.  Accepts either a list of tool name strings for simple
@@ -290,8 +292,6 @@ def create_deep_agent(
         dicts (e.g. ``{"allowed_decisions": ["approve", "edit", "reject"]}``).
         When ``None`` (default) no interrupts are configured and the agent
         runs autonomously.
-        Defaults to ``True``.  Set to ``False`` to create a standalone
-        agent without delegation capabilities (backwards-compatible mode).
 
     Returns
     -------
