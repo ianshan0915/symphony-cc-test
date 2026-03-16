@@ -17,6 +17,7 @@ from app.api.routes.assistants import router as assistants_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
+from app.api.routes.memory import router as memory_router
 from app.api.routes.skills import router as skills_router
 from app.api.routes.threads import router as threads_router
 from app.config import settings
@@ -170,6 +171,7 @@ app.include_router(threads_router)
 app.include_router(chat_router)
 app.include_router(assistants_router)
 app.include_router(skills_router)
+app.include_router(memory_router)
 
 
 @app.get("/healthz")

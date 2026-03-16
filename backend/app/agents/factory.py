@@ -320,6 +320,9 @@ def create_deep_agent(
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
+    # Resolve backend: explicit > default CompositeBackend factory
+    agent_backend = backend if backend is not None else _make_default_backend()
+
     # Resolve subagent configurations
     resolved_subagents: list[dict[str, Any]] | None = None
     if subagents is not None:
@@ -332,7 +335,7 @@ def create_deep_agent(
 
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "subagents=%d, checkpointer=%s, store=%s",
+        "subagents=%d, checkpointer=%s, store=%s, backend=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
@@ -350,6 +353,7 @@ def create_deep_agent(
         "checkpointer": saver,
         "store": memory_store,
         "backend": agent_backend,
+        "memory": ["/AGENTS.md"],
     }
 
     # Pass skills to deepagents if any were resolved

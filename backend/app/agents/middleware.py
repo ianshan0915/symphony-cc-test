@@ -14,6 +14,14 @@ parameters:
 Both backends are initialised once at application startup via
 :func:`setup_persistent_backends` and torn down via
 :func:`teardown_persistent_backends`.
+
+AGENTS.md — persistent memory file
+-----------------------------------
+A global ``/AGENTS.md`` file is seeded into the store on first run.  Deep
+agents load this file at conversation start (via ``memory=["/AGENTS.md"]``)
+and can update it with learned preferences, project context, and conventions
+so the information persists across threads.  The ``GET /memory`` and
+``PUT /memory`` API endpoints expose this file for human editing.
 """
 
 from __future__ import annotations
@@ -27,6 +35,37 @@ from langgraph.store.memory import InMemoryStore
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# AGENTS.md persistent memory constants
+# ---------------------------------------------------------------------------
+
+#: LangGraph store namespace for the global AGENTS.md memory file.
+AGENTS_MD_NAMESPACE: tuple[str, ...] = ("symphony", "memory")
+
+#: Key within the namespace where AGENTS.md content is stored.
+AGENTS_MD_KEY: str = "agents_md"
+
+#: Default initial content seeded into the store when it is first created.
+DEFAULT_AGENTS_MD_CONTENT: str = """\
+# Symphony Agent Memory
+
+This file provides persistent context loaded by agents at the start of every
+conversation.  Agents can update it to remember preferences, project
+conventions, and learned knowledge across threads.
+
+## Project Conventions
+
+<!-- Add project-specific conventions here -->
+
+## User Preferences
+
+<!-- Add user preferences here (e.g. communication style, output format) -->
+
+## Learned Context
+
+<!-- Agents append discoveries here automatically -->
+"""
 
 # ---------------------------------------------------------------------------
 # Singleton state
@@ -75,6 +114,9 @@ async def setup_persistent_backends() -> None:
         )
         _memory_store = InMemoryStore()
         _using_persistent_store = False
+
+    # Seed the default AGENTS.md content if it does not exist yet
+    await _seed_agents_md_if_missing()
 
     # --- Checkpointer ---
     try:
@@ -180,6 +222,67 @@ def reset_checkpointer() -> None:
     _checkpointer_pool = None
     _using_persistent_checkpointer = False
     logger.info("Checkpointer reset")
+
+
+# ---------------------------------------------------------------------------
+# AGENTS.md memory helpers
+# ---------------------------------------------------------------------------
+
+
+async def _seed_agents_md_if_missing() -> None:
+    """Seed the default AGENTS.md content into the store if absent.
+
+    Called once during startup after the store is initialised.  A no-op
+    when content already exists so user edits are never overwritten.
+    """
+    store = get_memory_store()
+    try:
+        existing = await store.aget(AGENTS_MD_NAMESPACE, AGENTS_MD_KEY)
+        if existing is None:
+            await store.aput(
+                AGENTS_MD_NAMESPACE,
+                AGENTS_MD_KEY,
+                {"content": DEFAULT_AGENTS_MD_CONTENT},
+            )
+            logger.info("Seeded default AGENTS.md content into store")
+        else:
+            logger.debug("AGENTS.md already present in store — skipping seed")
+    except Exception:
+        logger.warning("Failed to seed AGENTS.md into store", exc_info=True)
+
+
+async def get_agents_md() -> str:
+    """Return the current AGENTS.md content from the store.
+
+    Falls back to :data:`DEFAULT_AGENTS_MD_CONTENT` if the key is missing
+    or unreadable (e.g. store not yet initialised).
+    """
+    store = get_memory_store()
+    try:
+        item = await store.aget(AGENTS_MD_NAMESPACE, AGENTS_MD_KEY)
+        if item is not None:
+            value = item.value if hasattr(item, "value") else item
+            return str(value.get("content", DEFAULT_AGENTS_MD_CONTENT))
+    except Exception:
+        logger.warning("Failed to read AGENTS.md from store", exc_info=True)
+    return DEFAULT_AGENTS_MD_CONTENT
+
+
+async def set_agents_md(content: str) -> None:
+    """Write new AGENTS.md *content* to the store.
+
+    Parameters
+    ----------
+    content:
+        The full Markdown text to persist as the new AGENTS.md.
+    """
+    store = get_memory_store()
+    await store.aput(
+        AGENTS_MD_NAMESPACE,
+        AGENTS_MD_KEY,
+        {"content": content},
+    )
+    logger.info("AGENTS.md updated in store (%d chars)", len(content))
 
 
 # ---------------------------------------------------------------------------
