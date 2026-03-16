@@ -39,6 +39,19 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
   const [status, setStatus] = React.useState<Status>("idle");
   const [errorMessage, setErrorMessage] = React.useState("");
 
+  // Ref to track the "saved" auto-dismiss timer so it can be cancelled on
+  // unmount, preventing a stale state update after the modal closes.
+  const savedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cancel any pending "saved" dismiss timer when the component unmounts.
+  React.useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) {
+        clearTimeout(savedTimerRef.current);
+      }
+    };
+  }, []);
+
   // Fetch memory content when the modal opens.
   React.useEffect(() => {
     if (!open) return;
@@ -46,6 +59,10 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
     let cancelled = false;
 
     async function fetchMemory() {
+      // Explicitly reset to a clean slate before each load so stale content
+      // from a previous open is never briefly visible on re-open.
+      setContent("");
+      setSavedContent("");
       setStatus("loading");
       setErrorMessage("");
       try {
@@ -90,6 +107,13 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
       setContent(data.content);
       setSavedContent(data.content);
       setStatus("saved");
+      // Auto-dismiss "saved" indicator after 2 s.  Cancel any previous timer
+      // first to avoid duplicate dismissals when the user saves rapidly.
+      if (savedTimerRef.current !== null) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => {
+        savedTimerRef.current = null;
+        setStatus("idle");
+      }, 2000);
       // Reset "saved" indicator after 2 s.
       setTimeout(() => setStatus("idle"), 2000);
     } catch (err) {
@@ -107,7 +131,11 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen) onClose();
+    if (!nextOpen) {
+      // Discard unsaved edits so the modal is clean on the next open.
+      if (isDirty) handleReset();
+      onClose();
+    }
   }
 
   const kib = (byteLength / 1024).toFixed(1);

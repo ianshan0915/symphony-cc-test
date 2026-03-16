@@ -15,4 +15,9 @@ if (typeof globalThis.TextEncoder === "undefined") {
   // types and the DOM global declarations without @ts-expect-error.
   (globalThis as unknown as Record<string, unknown>).TextEncoder = utils.TextEncoder;
   (globalThis as unknown as Record<string, unknown>).TextDecoder = utils.TextDecoder;
+  const { TextEncoder, TextDecoder } = require("util") as typeof import("util");
+  // @ts-expect-error – assigning Node.js util types to the Web API globals
+  globalThis.TextEncoder = TextEncoder;
+  // @ts-expect-error – assigning Node.js util types to the Web API globals
+  globalThis.TextDecoder = TextDecoder;
 }
