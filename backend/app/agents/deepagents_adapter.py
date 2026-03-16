@@ -133,6 +133,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
             if isinstance(msg, ToolMessage):
                 content = str(msg.content)
                 tool_name = getattr(msg, "name", None) or ""
+                run_id = getattr(msg, "tool_call_id", "")
 
                 # Emit file_event for native filesystem tool results so the
                 # frontend can render file operations inline.
@@ -141,7 +142,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                         SSEEvent(
                             event="file_event",
                             data={
-                                "run_id": getattr(msg, "tool_call_id", ""),
+                                "run_id": run_id,
                                 "tool_name": tool_name,
                                 "output": content,
                             },
@@ -156,7 +157,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                     SSEEvent(
                         event="tool_result",
                         data={
-                            "run_id": getattr(msg, "tool_call_id", ""),
+                            "run_id": run_id,
                             "output": content,
                         },
                     )

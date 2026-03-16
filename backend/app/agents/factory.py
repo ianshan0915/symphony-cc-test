@@ -192,9 +192,7 @@ def _resolve_tools(
 # ---------------------------------------------------------------------------
 
 
-def _make_default_backend(
-    memory_store: Any,
-) -> Any:
+def _make_default_backend() -> Any:
     """Create the default CompositeBackend factory for deep agents.
 
     Returns a callable ``(ToolRuntime) -> CompositeBackend`` that routes:
@@ -202,11 +200,9 @@ def _make_default_backend(
     * ``/memories/`` paths → ``StoreBackend`` (persistent, cross-thread storage)
     * All other paths → ``StateBackend`` (ephemeral, checkpointed per-thread)
 
-    Parameters
-    ----------
-    memory_store:
-        The LangGraph BaseStore instance used by StoreBackend for persistent
-        memory routing.
+    ``StoreBackend`` resolves the LangGraph store from the runtime at call
+    time (via ``rt.store``), so no store reference is needed at factory
+    construction time.
     """
 
     def _backend_factory(rt: Any) -> CompositeBackend:
@@ -312,7 +308,7 @@ def create_deep_agent(
     memory_store = store if store is not None else get_memory_store()
 
     # Resolve filesystem backend: explicit > default CompositeBackend
-    agent_backend = backend if backend is not None else _make_default_backend(memory_store)
+    agent_backend = backend if backend is not None else _make_default_backend()
 
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
@@ -323,7 +319,7 @@ def create_deep_agent(
         len(skill_paths),
         type(saver).__name__,
         type(memory_store).__name__,
-        type(agent_backend).__name__ if not callable(agent_backend) else "factory",
+        "factory" if callable(agent_backend) else type(agent_backend).__name__,
     )
 
     create_kwargs: dict[str, Any] = {

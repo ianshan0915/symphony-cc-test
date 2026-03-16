@@ -23,8 +23,7 @@ class TestMakeDefaultBackend:
 
     def test_returns_callable(self) -> None:
         """_make_default_backend should return a callable backend factory."""
-        mock_store = MagicMock()
-        factory = _make_default_backend(mock_store)
+        factory = _make_default_backend()
         assert callable(factory)
 
     @patch("app.agents.factory.StoreBackend")
@@ -37,8 +36,7 @@ class TestMakeDefaultBackend:
         mock_store_backend: MagicMock,
     ) -> None:
         """The factory should create a CompositeBackend with correct routing."""
-        mock_store = MagicMock()
-        factory = _make_default_backend(mock_store)
+        factory = _make_default_backend()
 
         mock_rt = MagicMock()
         factory(mock_rt)
@@ -66,8 +64,7 @@ class TestMakeDefaultBackend:
         mock_store_backend: MagicMock,
     ) -> None:
         """The factory callable should return the CompositeBackend instance."""
-        mock_store = MagicMock()
-        factory = _make_default_backend(mock_store)
+        factory = _make_default_backend()
 
         mock_rt = MagicMock()
         result = factory(mock_rt)
