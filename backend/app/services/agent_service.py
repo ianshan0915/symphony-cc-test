@@ -1,15 +1,17 @@
 """Agent service — manages agent lifecycle, thread state, and streaming.
 
 Uses deepagents' ``astream()`` API with dual stream modes (``messages`` +
-``updates``) and its built-in ``interrupt`` mechanism for human-in-the-loop
+``updates``) and its native ``interrupt_on`` parameter for human-in-the-loop
 approval flows.
 
-When the agent invokes a tool listed in ``TOOLS_REQUIRING_APPROVAL``, the
-graph is configured to interrupt *before* that tool node executes.  The
-stream emits an ``approval_required`` SSE event and waits for the caller
-to resolve the decision.  On approval the graph is resumed with
-``Command(resume=True)``; on rejection it is resumed with
-``Command(resume=False)`` so the agent can handle the refusal gracefully.
+The ``interrupt_on`` configuration passed to ``create_deep_agent()`` tells
+deepagents which tools should pause for user approval.  When an interrupt
+fires the stream emits an ``approval_required`` SSE event and waits for the
+caller to resolve the decision.  Supported decisions are:
+
+* **approve** — resume execution of the tool as-is.
+* **edit** — modify the tool arguments and then execute.
+* **reject** — skip the tool and let the agent handle gracefully.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -38,35 +39,49 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Configuration — tools that require human approval before execution
+# Configuration — native interrupt_on for human-in-the-loop approval
 # ---------------------------------------------------------------------------
 
-TOOLS_REQUIRING_APPROVAL: set[str] = {
-    "web_search",
-    "search_knowledge_base",
-    # Add tool names here that should pause for user approval
+INTERRUPT_ON: dict[str, Any] = {
+    "web_search": {"allowed_decisions": ["approve", "edit", "reject"]},
+    "search_knowledge_base": True,
+    # Add tool names here that should pause for user approval.
+    # Use ``True`` for default approve/reject, or a dict with
+    # ``{"allowed_decisions": [...]}`` for richer control.
+}
+
+# Backward-compatible alias for code that references the old constant.
+TOOLS_REQUIRING_APPROVAL: set[str] = set(INTERRUPT_ON)
+
+# Maps decision type → past-tense label used in approval_result SSE events.
+_DECISION_PAST_TENSE: dict[str, str] = {
+    "approve": "approved",
+    "edit": "edited",
+    "reject": "rejected",
 }
 
 
 # ---------------------------------------------------------------------------
-# Pending approval state
+# Pending interrupt state (lightweight replacement for PendingApproval)
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class PendingApproval:
-    """Represents a tool call waiting for user approval."""
+class _PendingInterrupt:
+    """Lightweight container for an in-flight interrupt awaiting a decision.
 
-    approval_id: str
-    thread_id: str
-    tool_name: str
-    tool_args: dict[str, Any]
-    run_id: str
-    # Event to signal when the user has made a decision
-    decision_event: asyncio.Event = field(default_factory=asyncio.Event)
-    # The user's decision — set before signalling the event
-    approved: bool | None = None
-    reject_reason: str | None = None
+    This is an internal detail of :class:`AgentService` — external code
+    interacts via :meth:`AgentService.resolve_interrupt`.
+    """
+
+    __slots__ = ("approval_id", "decision", "decision_event", "interrupt_data", "thread_id")
+
+    def __init__(self, thread_id: str, approval_id: str, interrupt_data: dict[str, Any]) -> None:
+        self.thread_id = thread_id
+        self.approval_id = approval_id
+        self.interrupt_data = interrupt_data
+        self.decision_event = asyncio.Event()
+        # Set by resolve_interrupt before signalling the event.
+        self.decision: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -79,20 +94,20 @@ class AgentService:
 
     Holds a singleton agent graph (compiled once at startup) and provides
     a streaming interface that yields SSE events for each step of the agent
-    execution.  Supports human-in-the-loop approval via deepagents'
-    ``interrupt`` mechanism.
+    execution.  Supports human-in-the-loop approval via deepagents' native
+    ``interrupt_on`` parameter.
     """
 
     def __init__(self, agent: CompiledStateGraph | None = None) -> None:  # type: ignore[type-arg]
         self._agent = agent
-        # Map of thread_id -> PendingApproval for active approval requests
-        self._pending_approvals: dict[str, PendingApproval] = {}
+        # Map of thread_id -> _PendingInterrupt for active interrupt requests
+        self._pending_interrupts: dict[str, _PendingInterrupt] = {}
 
     @property
     def agent(self) -> CompiledStateGraph:  # type: ignore[type-arg]
         """Return the default agent graph, creating one lazily if needed."""
         if self._agent is None:
-            self._agent = create_deep_agent()
+            self._agent = create_deep_agent(interrupt_on=INTERRUPT_ON)
         return self._agent
 
     def get_agent(self, assistant_type: str | None = None) -> CompiledStateGraph:  # type: ignore[type-arg]
@@ -104,19 +119,58 @@ class AgentService:
         """
         if not assistant_type or assistant_type == "general":
             return self.agent
-        return create_deep_agent(assistant_type=assistant_type)
+        return create_deep_agent(assistant_type=assistant_type, interrupt_on=INTERRUPT_ON)
 
     def set_agent(self, agent: CompiledStateGraph) -> None:  # type: ignore[type-arg]
         """Replace the current agent graph (useful for testing)."""
         self._agent = agent
 
     # ------------------------------------------------------------------
-    # Approval management
+    # Interrupt management (replaces old PendingApproval / resolve_approval)
     # ------------------------------------------------------------------
 
-    def get_pending_approval(self, thread_id: str) -> PendingApproval | None:
-        """Return the pending approval for a thread, if any."""
-        return self._pending_approvals.get(thread_id)
+    def get_pending_approval(self, thread_id: str) -> _PendingInterrupt | None:
+        """Return the pending interrupt for a thread, if any.
+
+        Kept as ``get_pending_approval`` for backward compatibility with the
+        ``GET /chat/approval/{thread_id}`` endpoint.
+        """
+        return self._pending_interrupts.get(thread_id)
+
+    async def resolve_interrupt(
+        self,
+        thread_id: str,
+        *,
+        decision: str,
+        reason: str | None = None,
+        modified_args: dict[str, Any] | None = None,
+    ) -> bool:
+        """Resolve a pending interrupt for the given thread.
+
+        Parameters
+        ----------
+        thread_id:
+            Thread whose interrupt should be resolved.
+        decision:
+            One of ``"approve"``, ``"edit"``, or ``"reject"``.
+        reason:
+            Optional reason (used with ``"reject"``).
+        modified_args:
+            Modified tool arguments (used with ``"edit"``).
+
+        Returns ``True`` if an interrupt was found and resolved, ``False`` otherwise.
+        """
+        pending = self._pending_interrupts.get(thread_id)
+        if pending is None:
+            return False
+
+        pending.decision = {
+            "type": decision,
+            "reason": reason,
+            "modified_args": modified_args,
+        }
+        pending.decision_event.set()
+        return True
 
     async def resolve_approval(
         self,
@@ -124,18 +178,13 @@ class AgentService:
         approved: bool,
         reason: str | None = None,
     ) -> bool:
-        """Resolve a pending approval for the given thread.
+        """Backward-compatible wrapper around :meth:`resolve_interrupt`.
 
-        Returns True if an approval was found and resolved, False otherwise.
+        Translates the old ``approved: bool`` interface to the new
+        decision-based interface.
         """
-        pending = self._pending_approvals.get(thread_id)
-        if pending is None:
-            return False
-
-        pending.approved = approved
-        pending.reject_reason = reason
-        pending.decision_event.set()
-        return True
+        decision = "approve" if approved else "reject"
+        return await self.resolve_interrupt(thread_id, decision=decision, reason=reason)
 
     # ------------------------------------------------------------------
     # Streaming helpers
@@ -163,6 +212,33 @@ class AgentService:
             else:
                 # Fallback: treat as updates mode
                 yield ("updates", chunk)
+
+    # ------------------------------------------------------------------
+    # Resume command helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_resume_command(decision: dict[str, Any]) -> Command:
+        """Build a :class:`Command` to resume the graph after an interrupt.
+
+        Maps the three decision types to the appropriate resume value:
+
+        * ``approve`` → ``Command(resume=True)``
+        * ``edit``    → ``Command(resume={"decision": "edit", "tool_args": ...})``
+        * ``reject``  → ``Command(resume=False)``
+        """
+        dtype = decision.get("type", "reject")
+        if dtype == "approve":
+            return Command(resume=True)
+        if dtype == "edit":
+            return Command(
+                resume={
+                    "decision": "edit",
+                    "tool_args": decision.get("modified_args") or {},
+                }
+            )
+        # reject (default)
+        return Command(resume=False)
 
     # ------------------------------------------------------------------
     # Main streaming interface
@@ -198,8 +274,9 @@ class AgentService:
         1. ``message_start`` — signals the beginning of an assistant turn.
         2. ``token`` — each incremental text token from the LLM.
         3. ``tool_call`` — when the agent invokes a tool.
-        4. ``approval_required`` — when an interrupt requests human approval.
-        5. ``approval_result`` — after the user approves/rejects.
+        4. ``approval_required`` — when a native interrupt requests human
+           approval (includes ``allowed_decisions``).
+        5. ``approval_result`` — after the user approves/edits/rejects.
         6. ``tool_result`` — tool execution result.
         7. ``message_end`` — signals the end of the assistant turn with the
            full message content.
@@ -253,70 +330,70 @@ class AgentService:
                 if interrupt_data is None:
                     break
 
-                # --- Handle interrupt (approval flow) ---
+                # --- Handle native interrupt ---
                 tool_name = interrupt_data.get("tool_name", "unknown")
                 tool_args = interrupt_data.get("tool_args", {})
                 run_id = interrupt_data.get("run_id", "")
+                allowed_decisions = interrupt_data.get(
+                    "allowed_decisions",
+                    _allowed_decisions_for_tool(tool_name),
+                )
                 approval_id = str(uuid.uuid4())
 
-                pending = PendingApproval(
-                    approval_id=approval_id,
+                pending = _PendingInterrupt(
                     thread_id=thread_id,
-                    tool_name=tool_name,
-                    tool_args=tool_args if isinstance(tool_args, dict) else {"input": tool_args},
-                    run_id=run_id,
+                    approval_id=approval_id,
+                    interrupt_data=interrupt_data,
                 )
-                self._pending_approvals[thread_id] = pending
-
-                # Emit approval_required event
-                yield SSEEvent(
-                    event="approval_required",
-                    data={
-                        "approval_id": approval_id,
-                        "thread_id": thread_id,
-                        "tool_name": tool_name,
-                        "tool_args": pending.tool_args,
-                        "run_id": run_id,
-                    },
-                )
-
-                # Wait for user decision (with timeout)
+                self._pending_interrupts[thread_id] = pending
                 try:
-                    await asyncio.wait_for(
-                        pending.decision_event.wait(),
-                        timeout=300.0,  # 5 minute timeout
-                    )
-                except TimeoutError:
-                    # Auto-reject on timeout
-                    pending.approved = False
-                    pending.reject_reason = "Approval timed out after 5 minutes"
-
-                # Clean up pending approval
-                self._pending_approvals.pop(thread_id, None)
-
-                if pending.approved:
+                    # Emit approval_required event (backward compatible + new fields)
                     yield SSEEvent(
-                        event="approval_result",
+                        event="approval_required",
                         data={
                             "approval_id": approval_id,
-                            "decision": "approved",
+                            "thread_id": thread_id,
                             "tool_name": tool_name,
+                            "tool_args": (
+                                tool_args if isinstance(tool_args, dict) else {"input": tool_args}
+                            ),
+                            "run_id": run_id,
+                            "allowed_decisions": allowed_decisions,
                         },
                     )
-                    # Resume the graph — pass Command(resume=True) as input
-                    agent_input = Command(resume=True)
-                else:
-                    yield SSEEvent(
-                        event="approval_result",
-                        data={
-                            "approval_id": approval_id,
-                            "decision": "rejected",
-                            "tool_name": tool_name,
-                            "reason": pending.reject_reason or "User rejected the action",
-                        },
-                    )
-                    # Resume with rejection so the agent can handle gracefully
-                    agent_input = Command(resume=False)
+
+                    # Wait for user decision (with timeout)
+                    try:
+                        await asyncio.wait_for(
+                            pending.decision_event.wait(),
+                            timeout=300.0,  # 5 minute timeout
+                        )
+                    except TimeoutError:
+                        pending.decision = {
+                            "type": "reject",
+                            "reason": "Approval timed out after 5 minutes",
+                        }
+                finally:
+                    # Always clean up, even if the stream is cancelled mid-wait
+                    self._pending_interrupts.pop(thread_id, None)
+
+                decision = pending.decision or {"type": "reject", "reason": "No decision received"}
+                dtype = decision.get("type", "reject")
+
+                # Build approval_result event data based on decision type
+                result_data: dict[str, Any] = {
+                    "approval_id": approval_id,
+                    "decision": _DECISION_PAST_TENSE.get(dtype, dtype),
+                    "tool_name": tool_name,
+                }
+                if dtype == "edit":
+                    result_data["modified_args"] = decision.get("modified_args", {})
+                elif dtype == "reject":
+                    result_data["reason"] = decision.get("reason") or "User rejected the action"
+                yield SSEEvent(event="approval_result", data=result_data)
+
+                # Resume the graph with the appropriate command
+                agent_input = self._build_resume_command(decision)
 
         except Exception as exc:
             logger.exception("Agent streaming error for thread %s", thread_id)
@@ -335,6 +412,15 @@ class AgentService:
                 "tool_calls": tool_calls_data if tool_calls_data else None,
             },
         )
+
+
+def _allowed_decisions_for_tool(tool_name: str) -> list[str]:
+    """Return the allowed decisions for a tool based on ``INTERRUPT_ON`` config."""
+    cfg = INTERRUPT_ON.get(tool_name)
+    if isinstance(cfg, dict):
+        return cfg.get("allowed_decisions", ["approve", "reject"])
+    # Default for ``True`` or unknown tools
+    return ["approve", "reject"]
 
 
 # Module-level singleton (initialised lazily or at app startup).
