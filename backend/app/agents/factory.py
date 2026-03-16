@@ -230,6 +230,7 @@ def create_deep_agent(
     model_kwargs: dict[str, Any] | None = None,
     subagents: list[dict[str, Any]] | None = None,
     enable_subagents: bool = True,
+    interrupt_on: dict[str, Any] | list[str] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -282,6 +283,13 @@ def create_deep_agent(
         configs for researcher, coder, and writer are built automatically.
     enable_subagents:
         Whether to attach subagent configurations to the supervisor agent.
+    interrupt_on:
+        Tool names that should trigger a human-in-the-loop interrupt before
+        execution.  Accepts either a list of tool name strings for simple
+        approve/reject, or a dict mapping tool names to interrupt config
+        dicts (e.g. ``{"allowed_decisions": ["approve", "edit", "reject"]}``).
+        When ``None`` (default) no interrupts are configured and the agent
+        runs autonomously.
         Defaults to ``True``.  Set to ``False`` to create a standalone
         agent without delegation capabilities (backwards-compatible mode).
 
@@ -369,6 +377,10 @@ def create_deep_agent(
     # to the supervisor agent for delegating work to subagents
     if resolved_subagents:
         create_kwargs["subagents"] = resolved_subagents
+
+    # Pass interrupt_on when provided (human-in-the-loop tool approval)
+    if interrupt_on is not None:
+        create_kwargs["interrupt_on"] = interrupt_on
 
     agent = _deepagents_create(**create_kwargs)
 
