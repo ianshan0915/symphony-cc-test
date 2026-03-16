@@ -10,11 +10,12 @@ import hashlib
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
@@ -31,6 +32,44 @@ from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Runtime context schema — carries per-request data (e.g. user_id) into the
+# agent's LangGraph runtime so backend factories can resolve user-scoped
+# namespaces without coupling to LangGraph config internals.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UserContext:
+    """Runtime context for deep agents, carrying the authenticated user's ID.
+
+    Passed as ``context=UserContext(user_id=...)`` when invoking the agent.
+    The ``_user_ns_factory`` below reads ``ctx.runtime.context.user_id`` to
+    resolve the per-user ``("filesystem", user_id)`` store namespace so that
+    ``StoreBackend`` reads/writes to the correct user's AGENTS.md.
+    """
+
+    user_id: str | None = None
+
+
+def _user_ns_factory(ctx: BackendContext) -> tuple[str, ...]:
+    """Resolve the LangGraph store namespace for a backend operation.
+
+    When a ``user_id`` is present in the runtime context the namespace is
+    scoped to that user: ``("filesystem", user_id)``.  This matches exactly
+    the namespace written by ``set_agents_md(content, user_id=...)`` in
+    ``middleware.py``, so the agent reads the same data the API writes.
+
+    Falls back to the global ``("filesystem",)`` namespace when no user
+    context is available (e.g. background jobs, tests without auth context).
+    """
+    context = getattr(ctx.runtime, "context", None)
+    user_id = getattr(context, "user_id", None) if context is not None else None
+    if user_id:
+        return ("filesystem", str(user_id))
+    return ("filesystem",)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +248,11 @@ def _make_default_backend() -> Any:
     def _backend_factory(rt: Any) -> CompositeBackend:
         return CompositeBackend(
             default=StateBackend(rt),
-            routes={"/memories/": StoreBackend(rt)},
+            # Pass an explicit namespace factory so StoreBackend resolves the
+            # per-user namespace ("filesystem", user_id) instead of the legacy
+            # global ("filesystem",).  This ensures the agent reads from the
+            # same namespace the API writes to via set_agents_md(user_id=...).
+            routes={"/memories/": StoreBackend(rt, namespace=_user_ns_factory)},
         )
 
     return _backend_factory
@@ -230,6 +273,7 @@ def create_deep_agent(
     model_kwargs: dict[str, Any] | None = None,
     subagents: list[dict[str, Any]] | None = None,
     enable_subagents: bool = True,
+    interrupt_on: dict[str, Any] | list[str] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -284,6 +328,13 @@ def create_deep_agent(
         Whether to attach subagent configurations to the supervisor agent.
         Defaults to ``True``.  Set to ``False`` to create a standalone
         agent without delegation capabilities (backwards-compatible mode).
+    interrupt_on:
+        Tool names that should trigger a human-in-the-loop interrupt before
+        execution.  Accepts either a list of tool name strings for simple
+        approve/reject, or a dict mapping tool names to interrupt config
+        dicts (e.g. ``{"allowed_decisions": ["approve", "edit", "reject"]}``).
+        When ``None`` (default) no interrupts are configured and the agent
+        runs autonomously.
 
     Returns
     -------
@@ -320,6 +371,9 @@ def create_deep_agent(
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
+    # Resolve backend: explicit > default CompositeBackend factory
+    agent_backend = backend if backend is not None else _make_default_backend()
+
     # Resolve subagent configurations
     resolved_subagents: list[dict[str, Any]] | None = None
     if subagents is not None:
@@ -332,7 +386,7 @@ def create_deep_agent(
 
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "subagents=%d, checkpointer=%s, store=%s",
+        "subagents=%d, checkpointer=%s, store=%s, backend=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
@@ -350,6 +404,18 @@ def create_deep_agent(
         "checkpointer": saver,
         "store": memory_store,
         "backend": agent_backend,
+        # context_schema=UserContext allows the LangGraph runtime to accept a
+        # UserContext instance at invocation time (passed as
+        # context=UserContext(user_id=...)).  The _user_ns_factory above reads
+        # ctx.runtime.context.user_id to resolve the per-user store namespace
+        # so the agent loads the correct user's AGENTS.md.
+        "context_schema": UserContext,
+        # Load persistent memory from the store-backed /memories/ path.
+        # The CompositeBackend routes /memories/ to StoreBackend so the file
+        # survives across all threads.  The same path is used when seeding
+        # (middleware._seed_agents_md_if_missing) and the API endpoints
+        # (GET/PUT /memory), ensuring agents always see the latest content.
+        "memory": ["/memories/AGENTS.md"],
     }
 
     # Pass skills to deepagents if any were resolved
@@ -360,6 +426,10 @@ def create_deep_agent(
     # to the supervisor agent for delegating work to subagents
     if resolved_subagents:
         create_kwargs["subagents"] = resolved_subagents
+
+    # Pass interrupt_on when provided (human-in-the-loop tool approval)
+    if interrupt_on is not None:
+        create_kwargs["interrupt_on"] = interrupt_on
 
     agent = _deepagents_create(**create_kwargs)
 

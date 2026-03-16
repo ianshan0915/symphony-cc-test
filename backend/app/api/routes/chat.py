@@ -207,6 +207,7 @@ async def chat_stream(
             user_message=body.message,
             thread=thread,
             assistant_type=assistant_type,
+            user_id=str(current_user.id),
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":

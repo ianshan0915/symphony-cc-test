@@ -14,11 +14,29 @@ parameters:
 Both backends are initialised once at application startup via
 :func:`setup_persistent_backends` and torn down via
 :func:`teardown_persistent_backends`.
+
+AGENTS.md — per-user persistent memory file
+---------------------------------------------
+Each user has their own ``/memories/AGENTS.md`` in the store, isolated under
+the namespace ``("filesystem", user_id)``.  Deep agents load this file at
+conversation start (via ``memory=["/memories/AGENTS.md"]``), and can update
+it with learned preferences, project context, and conventions so the
+information persists across that user's threads.
+
+The path ``/memories/AGENTS.md`` is intentional: the ``CompositeBackend`` in
+``factory.py`` routes all ``/memories/`` paths to ``StoreBackend``, which
+reads/writes files as LangGraph store items using the file path as the key.
+The global seed (no user scope) provides the initial template; per-user
+reads fall back to :data:`DEFAULT_AGENTS_MD_CONTENT` on first access.
+
+The ``GET /memory`` and ``PUT /memory`` API endpoints scope all reads and
+writes to the authenticated user's namespace, preventing cross-user leakage.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -27,6 +45,53 @@ from langgraph.store.memory import InMemoryStore
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# AGENTS.md persistent memory constants
+# ---------------------------------------------------------------------------
+
+#: Base LangGraph store namespace used by ``StoreBackend`` (deepagents default).
+#:
+#: ``StoreBackend`` resolves its namespace via ``_get_namespace_legacy()`` which
+#: defaults to ``("filesystem",)`` when no ``assistant_id`` is present in the
+#: request config.  This is the *base* namespace; user-scoped helpers extend it
+#: to ``("filesystem", user_id)`` via :func:`_agents_md_namespace` so each
+#: user's AGENTS.md is isolated and cannot be read or overwritten by another.
+AGENTS_MD_NAMESPACE: tuple[str, ...] = ("filesystem",)
+
+#: Maximum allowed size (characters) for AGENTS.md content.
+#:
+#: Mirrors the ``max_length`` guard on ``MemoryUpdate.content`` in the API
+#: layer so callers of :func:`set_agents_md` are subject to the same limit.
+MAX_AGENTS_MD_SIZE: int = 524_288  # 512 KiB
+
+#: File path used as the store key for AGENTS.md.
+#:
+#: The path lives under ``/memories/`` so the ``CompositeBackend`` routes it
+#: to ``StoreBackend`` (persistent cross-thread storage) rather than the
+#: ephemeral ``StateBackend``.
+AGENTS_MD_KEY: str = "/memories/AGENTS.md"
+
+#: Default initial content seeded into the store when it is first created.
+DEFAULT_AGENTS_MD_CONTENT: str = """\
+# Symphony Agent Memory
+
+This file provides persistent context loaded by agents at the start of every
+conversation.  Agents can update it to remember preferences, project
+conventions, and learned knowledge across threads.
+
+## Project Conventions
+
+<!-- Add project-specific conventions here -->
+
+## User Preferences
+
+<!-- Add user preferences here (e.g. communication style, output format) -->
+
+## Learned Context
+
+<!-- Agents append discoveries here automatically -->
+"""
 
 # ---------------------------------------------------------------------------
 # Singleton state
@@ -75,6 +140,9 @@ async def setup_persistent_backends() -> None:
         )
         _memory_store = InMemoryStore()
         _using_persistent_store = False
+
+    # Seed the default AGENTS.md content if it does not exist yet
+    await _seed_agents_md_if_missing()
 
     # --- Checkpointer ---
     try:
@@ -180,6 +248,157 @@ def reset_checkpointer() -> None:
     _checkpointer_pool = None
     _using_persistent_checkpointer = False
     logger.info("Checkpointer reset")
+
+
+# ---------------------------------------------------------------------------
+# AGENTS.md memory helpers
+# ---------------------------------------------------------------------------
+
+
+def _agents_md_namespace(user_id: str | None = None) -> tuple[str, ...]:
+    """Return the store namespace for AGENTS.md, optionally scoped by user.
+
+    When *user_id* is provided the namespace is ``("filesystem", user_id)``,
+    isolating each user's memory from every other user.  When omitted the
+    global base namespace ``("filesystem",)`` is returned (used for the
+    startup seed and agent-level reads where no user context is available).
+
+    Parameters
+    ----------
+    user_id:
+        Authenticated user identifier, typically ``str(user.id)``.
+    """
+    if user_id:
+        return (AGENTS_MD_NAMESPACE[0], user_id)
+    return AGENTS_MD_NAMESPACE
+
+
+def _make_file_data(content: str, *, created_at: str | None = None) -> dict[str, Any]:
+    """Build a store value dict in the format expected by ``StoreBackend``.
+
+    ``StoreBackend`` stores files as ``{"content": list[str], "created_at": str,
+    "modified_at": str}`` where ``content`` is the file text split on newlines.
+    Our seed/get/set helpers must produce and consume values in this same format.
+
+    Parameters
+    ----------
+    content:
+        Full file text.
+    created_at:
+        ISO-formatted creation timestamp.  Defaults to *now* when ``None``.
+    """
+    now = datetime.now(UTC).isoformat()
+    return {
+        "content": content.split("\n"),
+        "created_at": created_at or now,
+        "modified_at": now,
+    }
+
+
+async def _seed_agents_md_if_missing() -> None:
+    """Seed the default AGENTS.md content into the store if absent.
+
+    Called once during startup after the store is initialised.  A no-op
+    when content already exists so user edits are never overwritten.
+    """
+    store = get_memory_store()
+    try:
+        existing = await store.aget(AGENTS_MD_NAMESPACE, AGENTS_MD_KEY)
+        if existing is None:
+            await store.aput(
+                AGENTS_MD_NAMESPACE,
+                AGENTS_MD_KEY,
+                _make_file_data(DEFAULT_AGENTS_MD_CONTENT),
+            )
+            logger.info("Seeded default AGENTS.md content into store")
+        else:
+            logger.debug("AGENTS.md already present in store — skipping seed")
+    except Exception:
+        logger.warning("Failed to seed AGENTS.md into store", exc_info=True)
+
+
+async def get_agents_md(user_id: str | None = None) -> str:
+    """Return the current AGENTS.md content from the store.
+
+    Falls back to :data:`DEFAULT_AGENTS_MD_CONTENT` if the key is missing
+    or unreadable (e.g. store not yet initialised).
+
+    The value stored by ``_seed_agents_md_if_missing`` and ``set_agents_md``
+    uses the ``StoreBackend`` file format: ``{"content": list[str], ...}``.
+    Lines are joined with ``"\\n"`` to reconstruct the original text.
+
+    Parameters
+    ----------
+    user_id:
+        When provided the read is scoped to ``("filesystem", user_id)`` so
+        only that user's memory is returned.  When ``None`` the global
+        namespace ``("filesystem",)`` is used (e.g. for agent-level reads).
+    """
+    store = get_memory_store()
+    namespace = _agents_md_namespace(user_id)
+    try:
+        item = await store.aget(namespace, AGENTS_MD_KEY)
+        if item is not None:
+            value = item.value if hasattr(item, "value") else item
+            raw = value.get("content", DEFAULT_AGENTS_MD_CONTENT)
+            # StoreBackend stores content as a list of lines
+            if isinstance(raw, list):
+                return "\n".join(raw)
+            return str(raw)
+    except Exception:
+        logger.warning("Failed to read AGENTS.md from store", exc_info=True)
+    return DEFAULT_AGENTS_MD_CONTENT
+
+
+async def set_agents_md(content: str, user_id: str | None = None) -> None:
+    """Write new AGENTS.md *content* to the store.
+
+    Preserves the original ``created_at`` timestamp if the file already
+    exists; otherwise creates a fresh timestamp.  The value is written in
+    ``StoreBackend`` file format so that deepagents can read it directly.
+
+    Raises :class:`ValueError` when *content* exceeds :data:`MAX_AGENTS_MD_SIZE`
+    characters, mirroring the API-layer size guard.
+
+    Parameters
+    ----------
+    content:
+        The full Markdown text to persist as the new AGENTS.md.
+    user_id:
+        When provided the write is scoped to ``("filesystem", user_id)`` so
+        each user's memory is stored in an isolated namespace.  When ``None``
+        the global namespace is used.
+    """
+    if len(content) > MAX_AGENTS_MD_SIZE:
+        raise ValueError(
+            f"AGENTS.md content exceeds maximum allowed size "
+            f"({len(content)} > {MAX_AGENTS_MD_SIZE} characters)"
+        )
+
+    store = get_memory_store()
+    namespace = _agents_md_namespace(user_id)
+    # Preserve creation timestamp from the existing item when available.
+    # Note: the read and subsequent write are not atomic — under concurrent
+    # PUT /memory requests for the same user it is possible for two writers to
+    # both read the same created_at and then both overwrite with their own
+    # content.  The last write wins for content (correct) and both preserve
+    # the original created_at (also correct).  No partial/corrupt state can
+    # result, so this non-atomicity is acceptable for a low-frequency endpoint.
+    created_at: str | None = None
+    try:
+        existing = await store.aget(namespace, AGENTS_MD_KEY)
+        if existing is not None:
+            value = existing.value if hasattr(existing, "value") else existing
+            created_at = value.get("created_at")
+    except Exception:
+        logger.debug("Could not read existing AGENTS.md created_at", exc_info=True)
+
+    await store.aput(
+        namespace,
+        AGENTS_MD_KEY,
+        _make_file_data(content, created_at=created_at),
+    )
+    logger.info("AGENTS.md updated in store (%d chars)", len(content))
 
 
 # ---------------------------------------------------------------------------
