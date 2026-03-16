@@ -353,18 +353,14 @@ class TestGetMemoryEndpoint:
         user_id = str(test_user.id)  # type: ignore[attr-defined]
         custom = "# My project notes"
         # Pre-seed in the user-scoped namespace (mirrors what PUT /memory writes)
-        await store.aput(
-            _agents_md_namespace(user_id), AGENTS_MD_KEY, _store_value(custom)
-        )
+        await store.aput(_agents_md_namespace(user_id), AGENTS_MD_KEY, _store_value(custom))
         with patch.object(mw, "_memory_store", store):
             response = await client.get("/memory")
         assert response.status_code == 200
         assert response.json()["content"] == custom
 
     @pytest.mark.asyncio
-    async def test_get_memory_does_not_return_other_user_content(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_get_memory_does_not_return_other_user_content(self, client: AsyncClient) -> None:
         """GET /memory must not return another user's content."""
         store = await _make_fresh_store()
         other_uid = "other-user-" + str(uuid.uuid4())
