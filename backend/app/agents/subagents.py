@@ -116,7 +116,7 @@ def build_subagent_configs(
 
     for agent_type in types:
         prompt = get_prompt_for_agent_type(agent_type)
-        tool_names = _resolve_subagent_tools(agent_type)
+        tools = _resolve_subagent_tools(agent_type)
         description = SUBAGENT_DESCRIPTIONS.get(agent_type, f"{agent_type} specialist")
 
         config: dict[str, Any] = {
@@ -124,7 +124,7 @@ def build_subagent_configs(
             "description": description,
             "model": model,
             "system_prompt": prompt,
-            "tools": tool_names,
+            "tools": tools,
         }
 
         if model_kwargs:
@@ -134,7 +134,7 @@ def build_subagent_configs(
         logger.debug(
             "Subagent config built: name=%s, tools=%d",
             agent_type,
-            len(tool_names),
+            len(tools),
         )
 
     logger.info("Built %d subagent configurations: %s", len(configs), [c["name"] for c in configs])

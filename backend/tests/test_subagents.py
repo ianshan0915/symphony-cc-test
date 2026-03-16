@@ -124,13 +124,10 @@ class TestSubagentConfigs:
         from app.agents.tools import TOOL_REGISTRY
 
         configs = build_subagent_configs(subagent_types=["custom_specialist"])
-        # Tools are returned as BaseTool objects; compare by count and id since
-        # StructuredTool instances are not hashable.
-        tools = configs[0]["tools"]
-        registry_tools = list(TOOL_REGISTRY.values())
-        assert len(tools) == len(registry_tools)
-        tool_ids = {id(t) for t in tools}
-        assert all(id(rt) in tool_ids for rt in registry_tools)
+        # Compare by .name — BaseTool.name is the stable semantic identifier.
+        tool_names = {t.name for t in configs[0]["tools"]}
+        expected_names = {t.name for t in TOOL_REGISTRY.values()}
+        assert tool_names == expected_names
 
     def test_config_name_matches_requested_type(self) -> None:
         """Each config's name field must match its corresponding subagent type."""
