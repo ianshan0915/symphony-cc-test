@@ -1,4 +1,4 @@
-"""Tests for subagent coordination via deepagents subagents= parameter (SYM-80).
+"""Tests for subagent coordination via deepagents subagents= parameter (SYM-79).
 
 Covers:
 - Subagent configuration building
@@ -90,6 +90,51 @@ class TestSubagentConfigs:
             assert isinstance(config["tools"], list)
             assert len(config["tools"]) > 0
 
+    def test_tools_are_tool_objects(self) -> None:
+        """All tool entries in every config should be BaseTool instances, not strings.
+
+        The deepagents SubAgent spec requires ``tools: Sequence[BaseTool | Callable | dict]``.
+        Passing plain strings causes an AttributeError in ToolNode at construction time.
+        """
+        from langchain_core.tools import BaseTool
+
+        configs = build_subagent_configs()
+        for config in configs:
+            for tool in config["tools"]:
+                assert isinstance(tool, BaseTool), (
+                    f"Expected BaseTool instance, got {type(tool)!r}. "
+                    "Tool names must be resolved to BaseTool instances before being "
+                    "passed to the deepagents framework."
+                )
+
+    def test_empty_subagent_types_falls_back_to_defaults(self) -> None:
+        """An empty list is falsy, so it falls back to the default SUBAGENT_TYPES."""
+        configs = build_subagent_configs(subagent_types=[])
+        # [] is falsy → `subagent_types or SUBAGENT_TYPES` returns SUBAGENT_TYPES
+        assert len(configs) == len(SUBAGENT_TYPES)
+
+    def test_unknown_agent_type_uses_fallback_description(self) -> None:
+        """An unrecognised agent type should use the '<name> specialist' fallback."""
+        configs = build_subagent_configs(subagent_types=["custom_specialist"])
+        assert len(configs) == 1
+        assert configs[0]["description"] == "custom_specialist specialist"
+
+    def test_unknown_agent_type_uses_all_tools(self) -> None:
+        """An unrecognised agent type has no specific tool list; all tools are used."""
+        from app.agents.tools import TOOL_REGISTRY
+
+        configs = build_subagent_configs(subagent_types=["custom_specialist"])
+        # Compare by .name — BaseTool.name is the stable semantic identifier.
+        tool_names = {t.name for t in configs[0]["tools"]}
+        expected_names = {t.name for t in TOOL_REGISTRY.values()}
+        assert tool_names == expected_names
+
+    def test_config_name_matches_requested_type(self) -> None:
+        """Each config's name field must match its corresponding subagent type."""
+        types = ["researcher", "coder"]
+        configs = build_subagent_configs(subagent_types=types)
+        assert [c["name"] for c in configs] == types
+
 
 # ---------------------------------------------------------------------------
 # Namespace extraction tests
@@ -137,6 +182,26 @@ class TestExtractSubagentNamespace:
 
     def test_non_string_element_returns_none(self) -> None:
         ns = (42,)  # type: ignore[assignment]
+        assert extract_subagent_namespace(ns) is None
+
+    def test_empty_string_namespace_returns_none(self) -> None:
+        """An element that is an empty string should produce None, not an empty name."""
+        ns = ("",)
+        assert extract_subagent_namespace(ns) is None
+
+    def test_colon_only_namespace_returns_none(self) -> None:
+        """An element like ':abc123' splits to name='', which should return None."""
+        ns = (":abc123",)
+        assert extract_subagent_namespace(ns) is None
+
+    def test_multi_element_namespace_uses_first(self) -> None:
+        """Only the first tuple element is inspected for the subagent name."""
+        ns = ("researcher:abc123", "other:xyz")
+        assert extract_subagent_namespace(ns) == "researcher"
+
+    def test_multi_element_namespace_filters_internal(self) -> None:
+        """Internal node names are filtered even when the tuple has multiple elements."""
+        ns = ("tools:abc123", "researcher:xyz")
         assert extract_subagent_namespace(ns) is None
 
 

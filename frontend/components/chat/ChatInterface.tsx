@@ -76,6 +76,12 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sub-agent tracking
   const [subAgents, setSubAgents] = React.useState<SubAgent[]>([]);
+  // Accumulates token text per subagent across progress events (keyed by subagent_name/id).
+  // Using a ref so mutations don't trigger re-renders — re-renders are driven by setSubAgents.
+  const subAgentProgressRef = React.useRef<Map<string, string>>(new Map());
+
+  // Memory modal state
+  const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
 
   // Memory modal state
   const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
@@ -141,6 +147,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       setFileOps([]);
       setSubAgents([]);
       setPendingApproval(null);
+      subAgentProgressRef.current.clear();
       setCurrentThreadId(threadId);
     },
     [currentThreadId]
@@ -152,6 +159,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     setTasks([]);
     setFileOps([]);
     setSubAgents([]);
+    subAgentProgressRef.current.clear();
     setPendingApproval(null);
   }, []);
 
@@ -172,6 +180,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
       // Clear sub-agents from previous turn
       setSubAgents([]);
+      subAgentProgressRef.current.clear();
 
       // Build the streaming URL
       const url = new URL(`${config.apiUrl}/chat/stream`);
@@ -508,9 +517,18 @@ interface SSEHandlers {
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
   setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Mutable map used to accumulate token text per subagent across progress events. */
+  subAgentProgressMap: Map<string, string>;
   updateAssistantContent: (content: string) => void;
   updateToolCalls: (calls: Message["toolCalls"]) => void;
 }
+
+/** Static descriptions shown for each known subagent type. */
+const SUBAGENT_DESCRIPTIONS: Record<string, string> = {
+  researcher: "Specialist for web research, data gathering, and source citation.",
+  coder: "Specialist for code generation, review, debugging, and technical implementation.",
+  writer: "Specialist for content writing, editing, and document creation.",
+};
 
 function processSSEEvent(
   event: string,
@@ -749,45 +767,71 @@ function processSSEEvent(
     }
 
     case "sub_agent_start": {
+      // Backend V2 emits `subagent_name`; use it as both the stable id and type.
+      const subagentName = (data.subagent_name as string) || (data.agent_name as string) || "";
+      if (!subagentName) break;
+
       const subAgent: SubAgent = {
-        id: (data.agent_id as string) || `sub-${Date.now()}`,
-        name: (data.agent_name as string) || "Sub-Agent",
-        type: (data.agent_type as string) || "unknown",
+        id: subagentName,
+        name: subagentName.charAt(0).toUpperCase() + subagentName.slice(1),
+        type: subagentName,
         status: "running",
-        description: data.description as string | undefined,
+        description:
+          (data.description as string | undefined) ??
+          SUBAGENT_DESCRIPTIONS[subagentName],
         startedAt: new Date().toISOString(),
       };
-      handlers.setSubAgents((prev) => [...prev, subAgent]);
+      // Initialize accumulator for this subagent's token progress text.
+      handlers.subAgentProgressMap.set(subagentName, "");
+      // Deduplicate in case the same agent emits a second start event.
+      handlers.setSubAgents((prev) =>
+        prev.some((a) => a.id === subagentName) ? prev : [...prev, subAgent]
+      );
       break;
     }
 
     case "sub_agent_progress": {
-      const agentId = data.agent_id as string;
-      const progressText = data.progress_text as string;
-      if (agentId) {
-        handlers.setSubAgents((prev) =>
-          prev.map((a) =>
-            a.id === agentId
-              ? { ...a, progressText: progressText ?? a.progressText }
-              : a
-          )
-        );
+      // Backend V2 emits `subagent_name`; fall back to `agent_id` for compatibility.
+      const subagentName =
+        (data.subagent_name as string) || (data.agent_id as string);
+      if (!subagentName) break;
+
+      const innerEvent = data.inner_event as string | undefined;
+
+      if (innerEvent === "token") {
+        // Accumulate token chunks so the full progress text grows over time.
+        const token = (data.token as string) ?? "";
+        if (token) {
+          const accumulated =
+            (handlers.subAgentProgressMap.get(subagentName) ?? "") + token;
+          handlers.subAgentProgressMap.set(subagentName, accumulated);
+
+          handlers.setSubAgents((prev) =>
+            prev.map((a) =>
+              a.id === subagentName
+                ? { ...a, progressText: accumulated }
+                : a
+            )
+          );
+        }
       }
+      // tool_call / tool_result inner events are tracked via the main event
+      // stream and do not modify progressText.
       break;
     }
 
     case "sub_agent_end": {
-      const agentId = data.agent_id as string;
-      const status = (data.status as string) === "error" ? "error" : "completed";
-      if (agentId) {
+      // Backend V2 emits `subagent_name`; fall back to `agent_id` for compatibility.
+      // The backend does not send a `status` field — default to "completed".
+      const subagentName =
+        (data.subagent_name as string) || (data.agent_id as string);
+      const status: SubAgent["status"] =
+        (data.status as string) === "error" ? "error" : "completed";
+      if (subagentName) {
         handlers.setSubAgents((prev) =>
           prev.map((a) =>
-            a.id === agentId
-              ? {
-                  ...a,
-                  status: status as SubAgent["status"],
-                  completedAt: new Date().toISOString(),
-                }
+            a.id === subagentName
+              ? { ...a, status, completedAt: new Date().toISOString() }
               : a
           )
         );

@@ -114,6 +114,8 @@ export function MemoryModal({ open, onClose }: MemoryModalProps) {
         savedTimerRef.current = null;
         setStatus("idle");
       }, 2000);
+      // Reset "saved" indicator after 2 s.
+      setTimeout(() => setStatus("idle"), 2000);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to save memory.";

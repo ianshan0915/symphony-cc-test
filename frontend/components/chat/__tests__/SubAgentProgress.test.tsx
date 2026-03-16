@@ -7,31 +7,37 @@ import type { SubAgent } from "../SubAgentProgress";
 
 const now = new Date().toISOString();
 
+/**
+ * Mock sub-agents matching the real backend V2 event payload format:
+ * - id equals subagent_name (the stable key from the backend)
+ * - name is the capitalised form of subagent_name
+ * - type equals subagent_name (used for icon lookup)
+ */
 const mockSubAgents: SubAgent[] = [
   {
-    id: "sa-1",
-    name: "Explore agent",
-    type: "explore",
+    id: "researcher",
+    name: "Researcher",
+    type: "researcher",
     status: "running",
-    description: "Searching for relevant files",
+    description: "Specialist for web research, data gathering, and source citation.",
     progressText: "Found 12 files matching pattern...",
     startedAt: now,
   },
   {
-    id: "sa-2",
-    name: "Plan agent",
-    type: "plan",
+    id: "coder",
+    name: "Coder",
+    type: "coder",
     status: "completed",
-    description: "Designed implementation strategy",
+    description: "Specialist for code generation, review, debugging, and technical implementation.",
     startedAt: now,
     completedAt: now,
   },
   {
-    id: "sa-3",
-    name: "Test runner",
-    type: "test",
+    id: "writer",
+    name: "Writer",
+    type: "writer",
     status: "error",
-    description: "Running test suite",
+    description: "Specialist for content writing, editing, and document creation.",
     startedAt: now,
     completedAt: now,
   },
@@ -45,9 +51,9 @@ describe("SubAgentProgress", () => {
 
   it("renders all sub-agents", () => {
     render(<SubAgentProgress subAgents={mockSubAgents} />);
-    expect(screen.getByText("Explore agent")).toBeInTheDocument();
-    expect(screen.getByText("Plan agent")).toBeInTheDocument();
-    expect(screen.getByText("Test runner")).toBeInTheDocument();
+    expect(screen.getByText("Researcher")).toBeInTheDocument();
+    expect(screen.getByText("Coder")).toBeInTheDocument();
+    expect(screen.getByText("Writer")).toBeInTheDocument();
   });
 
   it("shows the active count badge", () => {
@@ -80,7 +86,7 @@ describe("SubAgentProgress", () => {
     render(<SubAgentProgress subAgents={mockSubAgents} />);
     // Running agent is auto-expanded
     expect(
-      screen.getByText("Searching for relevant files"),
+      screen.getByText("Specialist for web research, data gathering, and source citation."),
     ).toBeInTheDocument();
   });
 
@@ -88,18 +94,18 @@ describe("SubAgentProgress", () => {
     const user = userEvent.setup();
     render(<SubAgentProgress subAgents={mockSubAgents} />);
 
-    // Plan agent is not running, so collapsed by default. Click to expand.
-    const planButton = screen.getByText("Plan agent").closest("button")!;
-    await user.click(planButton);
+    // Coder is not running, so collapsed by default. Click to expand.
+    const coderButton = screen.getByText("Coder").closest("button")!;
+    await user.click(coderButton);
 
     expect(
-      screen.getByText("Designed implementation strategy"),
+      screen.getByText("Specialist for code generation, review, debugging, and technical implementation."),
     ).toBeInTheDocument();
 
     // Click again to collapse
-    await user.click(planButton);
+    await user.click(coderButton);
     expect(
-      screen.queryByText("Designed implementation strategy"),
+      screen.queryByText("Specialist for code generation, review, debugging, and technical implementation."),
     ).not.toBeInTheDocument();
   });
 
@@ -108,11 +114,87 @@ describe("SubAgentProgress", () => {
     render(<SubAgentProgress subAgents={mockSubAgents} />);
 
     // Running agent auto-expanded
-    expect(screen.getByText("explore")).toBeInTheDocument();
+    expect(screen.getByText("researcher")).toBeInTheDocument();
 
     // Expand completed agent
-    const planButton = screen.getByText("Plan agent").closest("button")!;
-    await user.click(planButton);
-    expect(screen.getByText("plan")).toBeInTheDocument();
+    const coderButton = screen.getByText("Coder").closest("button")!;
+    await user.click(coderButton);
+    expect(screen.getByText("coder")).toBeInTheDocument();
+  });
+
+  it("shows progressText for completed agents when expanded", async () => {
+    const user = userEvent.setup();
+    const completedWithProgress: SubAgent = {
+      id: "researcher",
+      name: "Researcher",
+      type: "researcher",
+      status: "completed",
+      progressText: "Completed research summary text.",
+      startedAt: now,
+      completedAt: now,
+    };
+    render(<SubAgentProgress subAgents={[completedWithProgress]} />);
+
+    // Expand the completed agent
+    const button = screen.getByText("Researcher").closest("button")!;
+    await user.click(button);
+
+    // progressText should be visible even though agent is completed
+    expect(
+      screen.getByText("Completed research summary text."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders type-specific icon for researcher (no crash)", () => {
+    const researcher: SubAgent = {
+      id: "researcher",
+      name: "Researcher",
+      type: "researcher",
+      status: "running",
+      startedAt: now,
+    };
+    // Should render without throwing (Search icon replaces generic Bot icon)
+    const { container } = render(<SubAgentProgress subAgents={[researcher]} />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByText("Researcher")).toBeInTheDocument();
+  });
+
+  it("renders type-specific icon for coder (no crash)", () => {
+    const coder: SubAgent = {
+      id: "coder",
+      name: "Coder",
+      type: "coder",
+      status: "running",
+      startedAt: now,
+    };
+    const { container } = render(<SubAgentProgress subAgents={[coder]} />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByText("Coder")).toBeInTheDocument();
+  });
+
+  it("renders type-specific icon for writer (no crash)", () => {
+    const writer: SubAgent = {
+      id: "writer",
+      name: "Writer",
+      type: "writer",
+      status: "running",
+      startedAt: now,
+    };
+    const { container } = render(<SubAgentProgress subAgents={[writer]} />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByText("Writer")).toBeInTheDocument();
+  });
+
+  it("falls back to Bot icon for unknown type (no crash)", () => {
+    const unknown: SubAgent = {
+      id: "custom-agent",
+      name: "Custom",
+      type: "unknown_type",
+      status: "running",
+      startedAt: now,
+    };
+    const { container } = render(<SubAgentProgress subAgents={[unknown]} />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByText("Custom")).toBeInTheDocument();
   });
 });

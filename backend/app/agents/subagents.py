@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langchain_core.tools import BaseTool
+
 from app.agents.prompts import (
     get_prompt_for_agent_type,
     get_tools_for_agent_type,
@@ -56,16 +58,31 @@ SUBAGENT_DESCRIPTIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _resolve_subagent_tools(agent_type: str) -> list[str]:
-    """Return tool names for a subagent type.
+def _resolve_subagent_tools(agent_type: str) -> list[BaseTool]:
+    """Return tool objects for a subagent type.
 
-    Falls back to all registered tool names if the agent type has no
-    specific tool list.
+    Resolves registered tool names to their ``BaseTool`` instances.
+    Falls back to all registered tools if the agent type has no
+    specific tool list.  String names that are absent from the registry
+    are silently skipped with a warning so an unknown name never causes a
+    hard failure.
     """
-    tools = get_tools_for_agent_type(agent_type)
-    if tools is not None:
-        return tools
-    return list(TOOL_REGISTRY.keys())
+    tool_names = get_tools_for_agent_type(agent_type)
+    if tool_names is None:
+        return list(TOOL_REGISTRY.values())
+
+    resolved: list[BaseTool] = []
+    for name in tool_names:
+        tool = TOOL_REGISTRY.get(name)
+        if tool is None:
+            logger.warning(
+                "Tool '%s' not found in TOOL_REGISTRY; skipping for subagent '%s'",
+                name,
+                agent_type,
+            )
+        else:
+            resolved.append(tool)
+    return resolved
 
 
 def build_subagent_configs(
@@ -99,7 +116,7 @@ def build_subagent_configs(
 
     for agent_type in types:
         prompt = get_prompt_for_agent_type(agent_type)
-        tool_names = _resolve_subagent_tools(agent_type)
+        tools = _resolve_subagent_tools(agent_type)
         description = SUBAGENT_DESCRIPTIONS.get(agent_type, f"{agent_type} specialist")
 
         config: dict[str, Any] = {
@@ -107,7 +124,7 @@ def build_subagent_configs(
             "description": description,
             "model": model,
             "system_prompt": prompt,
-            "tools": tool_names,
+            "tools": tools,
         }
 
         if model_kwargs:
@@ -117,7 +134,7 @@ def build_subagent_configs(
         logger.debug(
             "Subagent config built: name=%s, tools=%d",
             agent_type,
-            len(tool_names),
+            len(tools),
         )
 
     logger.info("Built %d subagent configurations: %s", len(configs), [c["name"] for c in configs])
