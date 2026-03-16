@@ -33,6 +33,9 @@ class Assistant(Base):
     __tablename__ = "assistants"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     model: Mapped[str] = mapped_column(String(100), nullable=False, default="gpt-4o")
@@ -55,7 +58,7 @@ class Assistant(Base):
     skills = relationship("Skill", secondary=assistant_skills, lazy="selectin")
 
     def __repr__(self) -> str:
-        return f"<Assistant id={self.id} name={self.name!r}>"
+        return f"<Assistant id={self.id} name={self.name!r} user_id={self.user_id}>"
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +100,7 @@ class AssistantOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
     name: str
     description: Optional[str]
     model: str

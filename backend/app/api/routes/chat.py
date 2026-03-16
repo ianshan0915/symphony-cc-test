@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
+    get_current_user,
     get_db_session,
     rate_limiter,
     rate_limiter_strict,
@@ -19,6 +20,7 @@ from app.api.deps import (
 )
 from app.models.message import Message
 from app.models.thread import Thread
+from app.models.user import User
 from app.services.agent_service import agent_service
 from app.services.assistant_service import AssistantService
 from app.services.sse import SSEEvent
@@ -138,6 +140,7 @@ async def chat_stream(
     body: ChatRequest,
     thread_id: uuid.UUID | None = None,
     assistant_id: uuid.UUID | None = None,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
     """Stream an agent response as Server-Sent Events.
@@ -164,7 +167,7 @@ async def chat_stream(
     assistant_type = body.assistant_type
     if assistant_id is not None and assistant_type is None:
         assistant_svc = AssistantService(session)
-        assistant = await assistant_svc.get(assistant_id)
+        assistant = await assistant_svc.get(assistant_id, user_id=current_user.id)
         if assistant is not None:
             assistant_type = (assistant.metadata_ or {}).get("agent_type")
         else:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -45,8 +45,12 @@ class AssistantService:
             )
         return found
 
-    async def create(self, data: AssistantCreate) -> Assistant:
-        """Create a new assistant configuration."""
+    async def create(self, data: AssistantCreate, *, user_id: uuid.UUID | None = None) -> Assistant:
+        """Create a new assistant configuration.
+
+        When *user_id* is provided the assistant is owned by that user.
+        When ``None`` the assistant is system-owned (visible to everyone).
+        """
         # Resolve skills if provided
         skills = await self._resolve_skills(data.skill_ids)
 
@@ -57,6 +61,7 @@ class AssistantService:
             system_prompt=data.system_prompt,
             tools_enabled=data.tools_enabled,
             metadata_=data.metadata,
+            user_id=user_id,
         )
         if skills:
             assistant.skills = skills
@@ -66,9 +71,15 @@ class AssistantService:
         await self._session.refresh(assistant)
         return assistant
 
-    async def get(self, assistant_id: uuid.UUID) -> Assistant | None:
-        """Get an assistant configuration by ID."""
-        result = await self._session.execute(
+    async def get(
+        self, assistant_id: uuid.UUID, *, user_id: uuid.UUID | None = None
+    ) -> Assistant | None:
+        """Get an assistant configuration by ID.
+
+        Access is granted to system assistants (``user_id IS NULL``) and
+        assistants owned by *user_id*.
+        """
+        query = (
             select(Assistant)
             .options(selectinload(Assistant.skills))
             .where(
@@ -76,19 +87,35 @@ class AssistantService:
                 Assistant.is_active.is_(True),
             )
         )
+        if user_id is not None:
+            query = query.where(
+                or_(Assistant.user_id.is_(None), Assistant.user_id == user_id)
+            )
+
+        result = await self._session.execute(query)
         return result.scalar_one_or_none()
 
     async def list(
         self,
         *,
+        user_id: uuid.UUID | None = None,
         offset: int = 0,
         limit: int = 20,
         active_only: bool = True,
     ) -> tuple[list[Assistant], int]:
-        """List assistant configurations with pagination."""
+        """List assistant configurations with pagination.
+
+        Returns system assistants (``user_id IS NULL``) plus assistants
+        owned by *user_id* when provided.
+        """
         base_query = select(Assistant)
         if active_only:
             base_query = base_query.where(Assistant.is_active.is_(True))
+
+        if user_id is not None:
+            base_query = base_query.where(
+                or_(Assistant.user_id.is_(None), Assistant.user_id == user_id)
+            )
 
         # Count
         count_query = select(func.count()).select_from(base_query.subquery())
@@ -112,10 +139,31 @@ class AssistantService:
 
         return assistants, total
 
-    async def update(self, assistant_id: uuid.UUID, data: AssistantUpdate) -> Assistant | None:
-        """Update an assistant configuration."""
-        assistant = await self.get(assistant_id)
+    async def update(
+        self,
+        assistant_id: uuid.UUID,
+        data: AssistantUpdate,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> Assistant | None:
+        """Update an assistant configuration.
+
+        Only user-owned assistants can be updated.  System assistants
+        (``user_id IS NULL``) are read-only.
+
+        Raises ``PermissionError`` if the caller tries to modify a system
+        assistant.
+        """
+        assistant = await self.get(assistant_id, user_id=user_id)
         if assistant is None:
+            return None
+
+        # Prevent modification of system assistants
+        if assistant.user_id is None:
+            raise PermissionError("System assistants cannot be modified")
+
+        # Ensure user owns the assistant
+        if user_id is not None and assistant.user_id != user_id:
             return None
 
         update_data = data.model_dump(exclude_unset=True)
@@ -137,11 +185,29 @@ class AssistantService:
         await self._session.refresh(assistant)
         return assistant
 
-    async def delete(self, assistant_id: uuid.UUID) -> bool:
-        """Soft-delete an assistant configuration (set is_active=False)."""
-        assistant = await self.get(assistant_id)
+    async def delete(
+        self, assistant_id: uuid.UUID, *, user_id: uuid.UUID | None = None
+    ) -> bool:
+        """Soft-delete an assistant configuration (set is_active=False).
+
+        Only user-owned assistants can be deleted.  System assistants
+        (``user_id IS NULL``) are read-only.
+
+        Raises ``PermissionError`` if the caller tries to delete a system
+        assistant.
+        """
+        assistant = await self.get(assistant_id, user_id=user_id)
         if assistant is None:
             return False
+
+        # Prevent deletion of system assistants
+        if assistant.user_id is None:
+            raise PermissionError("System assistants cannot be deleted")
+
+        # Ensure user owns the assistant
+        if user_id is not None and assistant.user_id != user_id:
+            return False
+
         assistant.is_active = False
         await self._session.commit()
         return True
