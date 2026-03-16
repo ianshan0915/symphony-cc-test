@@ -198,3 +198,158 @@ describe("ChatInterface", () => {
     expect(screen.getByText("Conversations")).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sub-agent SSE integration tests
+// ---------------------------------------------------------------------------
+
+/** Helper to build a one-shot SSE stream mock and return it. */
+function sseStreamMock(events: string) {
+  const encoded = new TextEncoder().encode(events);
+  return {
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({ done: false, value: encoded })
+          .mockResolvedValueOnce({ done: true, value: undefined }),
+      }),
+    },
+  };
+}
+
+/** Build setupFetchMock that returns the given SSE events for /chat/stream. */
+function setupSubAgentFetchMock(sseEvents: string) {
+  setupFetchMock(async (url) => {
+    if (url.includes("/chat/stream")) {
+      return sseStreamMock(sseEvents);
+    }
+    // Other URLs (e.g. /auth/me on first render) get an empty successful response
+    return { ok: true, json: async () => ({}) };
+  });
+}
+
+describe("ChatInterface sub-agent SSE events", () => {
+  it("displays sub-agent panel when sub_agent_start event is received", async () => {
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"researcher","thread_id":"t1"}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Research this{Enter}");
+
+    // SubAgentProgress header and researcher agent should appear after SSE chain completes
+    await waitFor(() => {
+      expect(screen.getByText("Sub-Agents")).toBeInTheDocument();
+      expect(screen.getByText("Researcher")).toBeInTheDocument();
+    });
+  });
+
+  it("accumulates token progress text from sub_agent_progress events", async () => {
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"researcher","thread_id":"t1"}\n\n' +
+      'event: sub_agent_progress\ndata: {"subagent_name":"researcher","thread_id":"t1","inner_event":"token","token":"Searching "}\n\n' +
+      'event: sub_agent_progress\ndata: {"subagent_name":"researcher","thread_id":"t1","inner_event":"token","token":"the web..."}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Research{Enter}");
+
+    // Running agent is auto-expanded; accumulated tokens should be concatenated
+    await waitFor(() => {
+      expect(screen.getByText("Searching the web...")).toBeInTheDocument();
+    });
+  });
+
+  it("marks sub-agent as Completed after sub_agent_end event", async () => {
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"coder","thread_id":"t1"}\n\n' +
+      'event: sub_agent_end\ndata: {"subagent_name":"coder","thread_id":"t1"}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Write code{Enter}");
+
+    // Status label should have transitioned to "Completed"
+    await waitFor(() => {
+      expect(screen.getByText("Completed")).toBeInTheDocument();
+    });
+  });
+
+  it("clears sub-agents from previous turn when a new message is sent", async () => {
+    // First turn: researcher agent appears
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"researcher","thread_id":"t1"}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "First message{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("Researcher")).toBeInTheDocument();
+    });
+
+    // Second turn: no sub-agents — the panel should clear
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Hi","tool_calls":null}\n\n',
+    );
+
+    await userEvent.type(input, "Second message{Enter}");
+
+    // Sub-agent panel should be gone (SubAgentProgress renders null when list is empty)
+    await waitFor(() => {
+      expect(screen.queryByText("Researcher")).not.toBeInTheDocument();
+    });
+  });
+
+  it("handles multiple sub-agents in one turn", async () => {
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"researcher","thread_id":"t1"}\n\n' +
+      'event: sub_agent_end\ndata: {"subagent_name":"researcher","thread_id":"t1"}\n\n' +
+      'event: sub_agent_start\ndata: {"subagent_name":"writer","thread_id":"t1"}\n\n' +
+      'event: sub_agent_end\ndata: {"subagent_name":"writer","thread_id":"t1"}\n\n' +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Write a researched article{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("Researcher")).toBeInTheDocument();
+      expect(screen.getByText("Writer")).toBeInTheDocument();
+      // Both should be completed
+      expect(screen.getAllByText("Completed")).toHaveLength(2);
+    });
+  });
+});
