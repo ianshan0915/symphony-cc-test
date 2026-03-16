@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { MemoryModal } from "../MemoryModal";
@@ -197,5 +197,85 @@ describe("MemoryModal", () => {
     await userEvent.click(closeBtn);
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("resets unsaved edits when the modal is closed with dirty content", async () => {
+    const original = "# Memory";
+    mockFetch(() => okJson({ content: original }));
+    const onClose = jest.fn();
+    const { rerender } = render(<MemoryModal open onClose={onClose} />);
+
+    const textarea = await screen.findByRole("textbox", {
+      name: /agent memory content/i,
+    });
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, "Unsaved change");
+
+    // Close via the dialog X button
+    const closeBtn = screen.getByRole("button", { name: /close/i });
+    await userEvent.click(closeBtn);
+    expect(onClose).toHaveBeenCalled();
+
+    // Re-open: content should be refreshed (empty during load)
+    rerender(<MemoryModal open={false} onClose={onClose} />);
+    rerender(<MemoryModal open onClose={onClose} />);
+
+    // The textarea resets to the fetched value, not the unsaved edit.
+    const refreshedTextarea = await screen.findByRole("textbox", {
+      name: /agent memory content/i,
+    });
+    expect(refreshedTextarea).toHaveValue(original);
+  });
+
+  it("clears stale content while loading on re-open", async () => {
+    // First open — load "old content"
+    mockFetch(() => okJson({ content: "old content" }));
+    const { rerender } = render(<MemoryModal open onClose={jest.fn()} />);
+    await screen.findByRole("textbox");
+
+    // Close, then re-open with a never-resolving fetch to freeze on load
+    rerender(<MemoryModal open={false} onClose={jest.fn()} />);
+    (global.fetch as jest.Mock).mockImplementation(() => new Promise(() => {}));
+    rerender(<MemoryModal open onClose={jest.fn()} />);
+
+    // Loading state should be shown — old content should not be in the textarea
+    expect(await screen.findByText("Loading memory…")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("does not update state after unmount (setTimeout cleanup)", async () => {
+    const initial = "# Memory";
+    const updated = "# Memory\n\nNew fact";
+    let callCount = 0;
+    (global.fetch as jest.Mock).mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return Promise.resolve(okJson({ content: initial }));
+      return Promise.resolve(okJson({ content: updated }));
+    });
+
+    const { unmount } = render(<MemoryModal open onClose={jest.fn()} />);
+
+    const textarea = await screen.findByRole("textbox", {
+      name: /agent memory content/i,
+    });
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, updated);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    // Wait for the success banner to confirm save completed
+    await screen.findByText("Memory saved successfully.");
+
+    // Switch to fake timers now that all async interactions are done.
+    jest.useFakeTimers();
+
+    // Unmount before the 2s auto-dismiss timer fires.
+    unmount();
+
+    // Advance timers — should not throw a React state update warning.
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    jest.useRealTimers();
   });
 });

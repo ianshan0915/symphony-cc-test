@@ -350,6 +350,31 @@ async def get_agents_md(user_id: str | None = None) -> str:
     return DEFAULT_AGENTS_MD_CONTENT
 
 
+async def get_agents_md_modified_at(user_id: str | None = None) -> str | None:
+    """Return the ``modified_at`` timestamp of the user's AGENTS.md, or ``None``.
+
+    Used for lightweight change-detection (e.g. to decide whether to emit a
+    ``memory_updated`` SSE event) without the cost of reconstructing and
+    comparing the full file content string.  Returns ``None`` when the key is
+    absent or the store is unavailable.
+
+    Parameters
+    ----------
+    user_id:
+        When provided the read is scoped to ``("filesystem", user_id)``.
+    """
+    store = get_memory_store()
+    namespace = _agents_md_namespace(user_id)
+    try:
+        item = await store.aget(namespace, AGENTS_MD_KEY)
+        if item is not None:
+            value = item.value if hasattr(item, "value") else item
+            return value.get("modified_at")
+    except Exception:
+        logger.debug("Failed to read AGENTS.md modified_at from store", exc_info=True)
+    return None
+
+
 async def set_agents_md(content: str, user_id: str | None = None) -> None:
     """Write new AGENTS.md *content* to the store.
 

@@ -1,15 +1,16 @@
-"""Tests for SSE streaming chat endpoint (SYM-15, SYM-72)."""
+"""Tests for SSE streaming chat endpoint (SYM-15, SYM-72, SYM-86)."""
 
 from __future__ import annotations
 
 import json
 import uuid
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
 
+import app.agents.middleware as mw
 from app.models.assistant import AssistantCreate
 from app.models.thread import ThreadCreate
 from app.services.agent_service import AgentService, SSEEvent
@@ -245,6 +246,119 @@ class TestChatStreamEndpoint:
             assert resp.status_code == 200
             # assistant_type should be None (fallback to default)
             assert captured_kwargs.get("assistant_type") is None
+        finally:
+            agent_service.stream_response = original_stream  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_memory_updated_event_emitted_when_timestamp_changes(
+        self,
+        client: AsyncClient,
+        thread_service: ThreadService,
+        db_session,
+    ) -> None:
+        """memory_updated SSE event is emitted when AGENTS.md timestamp changes."""
+        thread = await thread_service.create(ThreadCreate(title="mem test"))
+
+        async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={"thread_id": kwargs["thread_id"], "content": "ok", "tool_calls": None},
+            )
+
+        from app.services.agent_service import agent_service
+
+        original_stream = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            # Patch get_agents_md_modified_at to simulate a timestamp change.
+            call_count = 0
+
+            async def fake_modified_at(user_id: str | None = None) -> str:
+                nonlocal call_count
+                call_count += 1
+                return "2026-01-01T00:00:00" if call_count == 1 else "2026-01-01T00:01:00"
+
+            with patch.object(mw, "_memory_store", mw.get_memory_store()):
+                with patch("app.api.routes.chat.get_agents_md_modified_at", fake_modified_at):
+                    resp = await client.post(
+                        f"/chat/stream?thread_id={thread.id}",
+                        json={"message": "hello"},
+                    )
+            assert resp.status_code == 200
+            assert "event: memory_updated" in resp.text
+        finally:
+            agent_service.stream_response = original_stream  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_memory_updated_event_not_emitted_when_timestamp_unchanged(
+        self,
+        client: AsyncClient,
+        thread_service: ThreadService,
+        db_session,
+    ) -> None:
+        """memory_updated SSE event is NOT emitted when AGENTS.md is unchanged."""
+        thread = await thread_service.create(ThreadCreate(title="mem test 2"))
+
+        async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={"thread_id": kwargs["thread_id"], "content": "ok", "tool_calls": None},
+            )
+
+        from app.services.agent_service import agent_service
+
+        original_stream = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            same_ts = "2026-01-01T00:00:00"
+
+            async def fake_modified_at_same(user_id: str | None = None) -> str:
+                return same_ts
+
+            with patch("app.api.routes.chat.get_agents_md_modified_at", fake_modified_at_same):
+                resp = await client.post(
+                    f"/chat/stream?thread_id={thread.id}",
+                    json={"message": "hello"},
+                )
+            assert resp.status_code == 200
+            assert "event: memory_updated" not in resp.text
+        finally:
+            agent_service.stream_response = original_stream  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_memory_updated_event_not_emitted_when_timestamp_unavailable(
+        self,
+        client: AsyncClient,
+        thread_service: ThreadService,
+        db_session,
+    ) -> None:
+        """memory_updated is NOT emitted when both timestamps are None (no memory yet)."""
+        thread = await thread_service.create(ThreadCreate(title="mem test 3"))
+
+        async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={"thread_id": kwargs["thread_id"], "content": "ok", "tool_calls": None},
+            )
+
+        from app.services.agent_service import agent_service
+
+        original_stream = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            async def fake_modified_at_none(user_id: str | None = None) -> None:
+                return None
+
+            with patch("app.api.routes.chat.get_agents_md_modified_at", fake_modified_at_none):
+                resp = await client.post(
+                    f"/chat/stream?thread_id={thread.id}",
+                    json={"message": "hello"},
+                )
+            assert resp.status_code == 200
+            assert "event: memory_updated" not in resp.text
         finally:
             agent_service.stream_response = original_stream  # type: ignore[assignment]
 
