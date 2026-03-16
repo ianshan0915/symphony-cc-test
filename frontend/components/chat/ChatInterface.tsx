@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
 import { UserMenu } from "@/components/UserMenu";
+import { MemoryModal } from "@/components/memory/MemoryModal";
+import { BookOpen } from "lucide-react";
 import type {
   Message,
   ApprovalRequest,
@@ -74,6 +76,9 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sub-agent tracking
   const [subAgents, setSubAgents] = React.useState<SubAgent[]>([]);
+
+  // Memory modal state
+  const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
 
   // Persist currentThreadId to localStorage whenever it changes
   React.useEffect(() => {
@@ -416,6 +421,16 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                 Approval pending
               </span>
             )}
+            {/* Memory button */}
+            <button
+              type="button"
+              onClick={() => setIsMemoryOpen(true)}
+              title="View and edit agent memory"
+              aria-label="Open agent memory"
+              className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <BookOpen className="h-4 w-4" />
+            </button>
             <UserMenu />
           </div>
         </header>
@@ -448,6 +463,12 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         onApprove={handleApprove}
         onReject={handleReject}
         isSubmitting={isApprovalSubmitting}
+      />
+
+      {/* Memory modal */}
+      <MemoryModal
+        open={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
       />
     </div>
   );

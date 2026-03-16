@@ -124,6 +124,12 @@ export interface ThreadMessage {
   created_at: string;
 }
 
+/** Response from GET /memory and PUT /memory */
+export interface MemoryResponse {
+  /** Current AGENTS.md Markdown content */
+  content: string;
+}
+
 /** A file operation tracked by the agent */
 export interface FileOperation {
   id: string;
