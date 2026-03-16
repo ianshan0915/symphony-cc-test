@@ -37,6 +37,52 @@ export function setLogoutCallback(cb: () => void): void {
 }
 
 // ---------------------------------------------------------------------------
+// Token refresh logic
+// ---------------------------------------------------------------------------
+
+/** In-flight refresh promise used to deduplicate concurrent refresh attempts. */
+let refreshPromise: Promise<boolean> | null = null;
+
+/**
+ * Attempt to obtain a fresh JWT via `POST /auth/refresh`.
+ *
+ * Returns `true` when a new token was stored, `false` otherwise.  Concurrent
+ * callers share a single in-flight request so we never fire multiple refresh
+ * calls at the same time.
+ */
+async function attemptTokenRefresh(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    try {
+      const token = getToken();
+      if (!token) return false;
+
+      const res = await fetch(`${config.apiUrl}/auth/refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      const newToken: string | undefined =
+        data?.access_token ?? data?.token;
+      if (!newToken) return false;
+
+      setToken(newToken);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+// ---------------------------------------------------------------------------
 // Authenticated fetch wrapper
 // ---------------------------------------------------------------------------
 
@@ -44,7 +90,8 @@ export function setLogoutCallback(cb: () => void): void {
  * Wrapper around `fetch` that:
  * 1. Prepends the API base URL when the path starts with `/`
  * 2. Attaches the `Authorization: Bearer <token>` header
- * 3. Intercepts 401 responses and triggers logout
+ * 3. On 401, attempts a token refresh and retries the request once
+ * 4. If the refresh also fails, clears the token and triggers logout
  */
 export async function apiFetch(
   path: string,
@@ -64,6 +111,26 @@ export async function apiFetch(
   });
 
   if (response.status === 401) {
+    // Don't try to refresh if this request was itself a refresh call
+    if (path === "/auth/refresh") {
+      clearToken();
+      logoutCallback?.();
+      return response;
+    }
+
+    const refreshed = await attemptTokenRefresh();
+
+    if (refreshed) {
+      // Retry the original request with the new token
+      const retryHeaders = new Headers(init?.headers);
+      const newToken = getToken();
+      if (newToken) {
+        retryHeaders.set("Authorization", `Bearer ${newToken}`);
+      }
+      return fetch(url, { ...init, headers: retryHeaders });
+    }
+
+    // Refresh failed — hard logout
     clearToken();
     logoutCallback?.();
   }
