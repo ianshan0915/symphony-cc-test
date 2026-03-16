@@ -1,4 +1,4 @@
-"""Tests for subagent coordination via deepagents subagents= parameter (SYM-80).
+"""Tests for subagent coordination via deepagents subagents= parameter (SYM-79).
 
 Covers:
 - Subagent configuration building
