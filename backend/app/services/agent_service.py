@@ -224,10 +224,12 @@ class AgentService:
         if dtype == "approve":
             return Command(resume=True)
         if dtype == "edit":
-            return Command(resume={
-                "decision": "edit",
-                "tool_args": decision.get("modified_args") or {},
-            })
+            return Command(
+                resume={
+                    "decision": "edit",
+                    "tool_args": decision.get("modified_args") or {},
+                }
+            )
         # reject (default)
         return Command(resume=False)
 

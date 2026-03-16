@@ -458,10 +458,12 @@ class TestBuildResumeCommand:
     def test_edit_returns_resume_with_args(self) -> None:
         from langgraph.types import Command
 
-        cmd = AgentService._build_resume_command({
-            "type": "edit",
-            "modified_args": {"query": "better"},
-        })
+        cmd = AgentService._build_resume_command(
+            {
+                "type": "edit",
+                "modified_args": {"query": "better"},
+            }
+        )
         assert isinstance(cmd, Command)
         assert cmd.resume == {"decision": "edit", "tool_args": {"query": "better"}}
 

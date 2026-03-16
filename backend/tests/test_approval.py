@@ -98,7 +98,9 @@ class TestAgentServiceInterrupt:
 
         modified = {"query": "better search"}
         result = await svc.resolve_interrupt(
-            "thread-1", decision="edit", modified_args=modified,
+            "thread-1",
+            decision="edit",
+            modified_args=modified,
         )
         assert result is True
         assert pending.decision["type"] == "edit"
