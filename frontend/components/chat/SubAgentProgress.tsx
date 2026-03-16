@@ -3,6 +3,9 @@
 import * as React from "react";
 import {
   Bot,
+  Search,
+  Code2,
+  Pen,
   Loader2,
   CheckCircle2,
   AlertCircle,
@@ -84,6 +87,25 @@ const statusConfig: Record<
     bgColor: "bg-amber-500/10",
   },
 };
+
+// ---------------------------------------------------------------------------
+// Type-specific icon mapping
+// ---------------------------------------------------------------------------
+
+/** Maps known subagent type names to representative icons. */
+const typeIconMap: Record<string, React.ElementType> = {
+  researcher: Search,
+  research: Search,
+  coder: Code2,
+  code: Code2,
+  writer: Pen,
+  write: Pen,
+};
+
+/** Returns the icon for a given agent type, falling back to Bot. */
+function getTypeIcon(agentType: string): React.ElementType {
+  return typeIconMap[agentType?.toLowerCase()] ?? Bot;
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -189,7 +211,9 @@ export function SubAgentProgress({
                 {/* Agent info */}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <Bot className="h-3 w-3 text-muted-foreground" />
+                    {React.createElement(getTypeIcon(agent.type), {
+                      className: "h-3 w-3 text-muted-foreground shrink-0",
+                    })}
                     <span className="text-xs font-medium truncate">
                       {agent.name}
                     </span>
@@ -234,8 +258,8 @@ export function SubAgentProgress({
                     {agent.type}
                   </span>
 
-                  {/* Streaming progress */}
-                  {agent.progressText && isRunning && (
+                  {/* Streaming progress — visible while running and after completion */}
+                  {agent.progressText && (
                     <div className="mt-1.5 rounded bg-secondary/60 px-2 py-1.5">
                       <p className="text-[11px] text-foreground/80 font-mono leading-relaxed line-clamp-4 whitespace-pre-wrap">
                         {agent.progressText}
