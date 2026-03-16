@@ -66,7 +66,7 @@ class _PendingInterrupt:
     interacts via :meth:`AgentService.resolve_interrupt`.
     """
 
-    __slots__ = ("thread_id", "approval_id", "interrupt_data", "decision_event", "decision")
+    __slots__ = ("approval_id", "decision", "decision_event", "interrupt_data", "thread_id")
 
     def __init__(self, thread_id: str, approval_id: str, interrupt_data: dict[str, Any]) -> None:
         self.thread_id = thread_id
@@ -345,7 +345,9 @@ class AgentService:
                         "approval_id": approval_id,
                         "thread_id": thread_id,
                         "tool_name": tool_name,
-                        "tool_args": tool_args if isinstance(tool_args, dict) else {"input": tool_args},
+                        "tool_args": (
+                            tool_args if isinstance(tool_args, dict) else {"input": tool_args}
+                        ),
                         "run_id": run_id,
                         "allowed_decisions": allowed_decisions,
                     },
@@ -358,7 +360,10 @@ class AgentService:
                         timeout=300.0,  # 5 minute timeout
                     )
                 except TimeoutError:
-                    pending.decision = {"type": "reject", "reason": "Approval timed out after 5 minutes"}
+                    pending.decision = {
+                        "type": "reject",
+                        "reason": "Approval timed out after 5 minutes",
+                    }
 
                 # Clean up pending interrupt
                 self._pending_interrupts.pop(thread_id, None)
