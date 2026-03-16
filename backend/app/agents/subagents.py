@@ -75,7 +75,11 @@ def _resolve_subagent_tools(agent_type: str) -> list[BaseTool]:
     for name in tool_names:
         tool = TOOL_REGISTRY.get(name)
         if tool is None:
-            logger.warning("Tool '%s' not found in TOOL_REGISTRY; skipping for subagent '%s'", name, agent_type)
+            logger.warning(
+                "Tool '%s' not found in TOOL_REGISTRY; skipping for subagent '%s'",
+                name,
+                agent_type,
+            )
         else:
             resolved.append(tool)
     return resolved
