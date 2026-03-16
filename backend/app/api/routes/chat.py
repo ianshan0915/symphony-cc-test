@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.middleware import get_agents_md
 from app.api.deps import (
     get_current_user,
     get_db_session,
@@ -168,6 +169,7 @@ async def chat_stream(
     - ``approval_result`` — user approved or rejected the tool call
     - ``tool_result`` — tool execution result
     - ``message_end`` — assistant turn complete (includes full content)
+    - ``memory_updated`` — agent saved new memories during the conversation
     - ``error`` — an error occurred during processing
     """
     thread_svc = ThreadService(session)
@@ -202,12 +204,20 @@ async def chat_stream(
         full_content = ""
         tool_calls: list[Any] = []
 
+        # Snapshot memory content before the agent runs so we can detect
+        # whether the agent saved new memories during this turn.
+        user_id_str = str(current_user.id)
+        try:
+            memory_before = await get_agents_md(user_id=user_id_str)
+        except Exception:
+            memory_before = None
+
         async for sse_event in agent_service.stream_response(
             thread_id=str(thread.id),
             user_message=body.message,
             thread=thread,
             assistant_type=assistant_type,
-            user_id=str(current_user.id),
+            user_id=user_id_str,
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":
@@ -215,6 +225,18 @@ async def chat_stream(
                 tool_calls = sse_event.data.get("tool_calls") or []
 
             yield sse_event.encode()
+
+        # Emit memory_updated if the agent changed the user's AGENTS.md.
+        if memory_before is not None:
+            try:
+                memory_after = await get_agents_md(user_id=user_id_str)
+                if memory_after != memory_before:
+                    yield SSEEvent(
+                        event="memory_updated",
+                        data={"thread_id": str(thread.id)},
+                    ).encode()
+            except Exception:
+                logger.debug("Failed to compare memory content after agent run", exc_info=True)
 
         # Persist assistant response after streaming completes
         if full_content:

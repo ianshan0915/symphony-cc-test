@@ -315,6 +315,10 @@ class AgentService:
         7. ``message_end`` — signals the end of the assistant turn with the
            full message content.
 
+        Note: a ``memory_updated`` SSE event is emitted by the HTTP layer
+        (``chat.py``) *after* ``message_end`` when the agent has written new
+        content to the user's AGENTS.md during this turn.
+
         On error an ``error`` event is yielded and the stream terminates.
         """
         config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}

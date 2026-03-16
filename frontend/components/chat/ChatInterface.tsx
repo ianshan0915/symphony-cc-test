@@ -79,6 +79,8 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Memory modal state
   const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
+  // Badge shown on the memory button when the agent saves new memories.
+  const [memoryUpdated, setMemoryUpdated] = React.useState(false);
 
   // Persist currentThreadId to localStorage whenever it changes
   React.useEffect(() => {
@@ -248,6 +250,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setTasks,
                     setFileOps,
                     setSubAgents,
+                    setMemoryUpdated,
                     updateAssistantContent: (newContent: string) => {
                       assistantContent = newContent;
                     },
@@ -421,15 +424,32 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                 Approval pending
               </span>
             )}
-            {/* Memory button */}
+            {/* Memory button — badge appears when agent saves new memories */}
             <button
               type="button"
-              onClick={() => setIsMemoryOpen(true)}
-              title="View and edit agent memory"
-              aria-label="Open agent memory"
-              className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+              onClick={() => {
+                setMemoryUpdated(false);
+                setIsMemoryOpen(true);
+              }}
+              title={
+                memoryUpdated
+                  ? "Agent saved new memories — click to view"
+                  : "View and edit agent memory"
+              }
+              aria-label={
+                memoryUpdated
+                  ? "Open agent memory (updated)"
+                  : "Open agent memory"
+              }
+              className="relative flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <BookOpen className="h-4 w-4" />
+              {memoryUpdated && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-1 right-1 h-2 w-2 rounded-full bg-blue-500"
+                />
+              )}
             </button>
             <UserMenu />
           </div>
@@ -487,6 +507,7 @@ interface SSEHandlers {
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
+  setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
   updateAssistantContent: (content: string) => void;
   updateToolCalls: (calls: Message["toolCalls"]) => void;
 }
@@ -771,6 +792,12 @@ function processSSEEvent(
           )
         );
       }
+      break;
+    }
+
+    case "memory_updated": {
+      // Agent saved new memories during this turn — light up the badge.
+      handlers.setMemoryUpdated(true);
       break;
     }
 
