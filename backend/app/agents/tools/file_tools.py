@@ -16,7 +16,7 @@ import logging
 import mimetypes
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Optional
+from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg, tool
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_THREAD_ID = "00000000-0000-0000-0000-000000000000"
 
 
-def _extract_thread_id(config: Optional[RunnableConfig] = None) -> str:
+def _extract_thread_id(config: RunnableConfig | None = None) -> str:
     """Extract the thread_id from a LangGraph RunnableConfig.
 
     Falls back to a default UUID if the config is not available (e.g. in
@@ -48,7 +48,7 @@ def _extract_thread_id(config: Optional[RunnableConfig] = None) -> str:
     return _DEFAULT_THREAD_ID
 
 
-def _guess_mime_type(file_path: str) -> Optional[str]:
+def _guess_mime_type(file_path: str) -> str | None:
     """Return a MIME type guess based on the file extension."""
     mime, _ = mimetypes.guess_type(file_path)
     return mime
@@ -102,10 +102,7 @@ async def create_file(
         await session.commit()
 
         size = len(content)
-        return (
-            f"File created successfully: '{file_path}' "
-            f"({size} bytes, id={artifact.id})"
-        )
+        return f"File created successfully: '{file_path}' ({size} bytes, id={artifact.id})"
 
 
 @tool
@@ -141,9 +138,7 @@ async def write_file(
             existing.mime_type = _guess_mime_type(file_path)
             existing.updated_at = now
             await session.commit()
-            return (
-                f"File updated: '{file_path}' ({len(content)} bytes, id={existing.id})"
-            )
+            return f"File updated: '{file_path}' ({len(content)} bytes, id={existing.id})"
         else:
             artifact = FileArtifact(
                 thread_id=uuid.UUID(thread_id),
@@ -154,9 +149,7 @@ async def write_file(
             )
             session.add(artifact)
             await session.commit()
-            return (
-                f"File written: '{file_path}' ({len(content)} bytes, id={artifact.id})"
-            )
+            return f"File written: '{file_path}' ({len(content)} bytes, id={artifact.id})"
 
 
 @tool
@@ -186,10 +179,7 @@ async def read_file(
     if artifact is None:
         return f"Error: File not found at '{file_path}'."
 
-    return (
-        f"--- {file_path} ({len(artifact.content)} bytes) ---\n"
-        f"{artifact.content}"
-    )
+    return f"--- {file_path} ({len(artifact.content)} bytes) ---\n{artifact.content}"
 
 
 @tool
@@ -228,9 +218,7 @@ async def edit_file(
 
         count = artifact.content.count(old_text)
         if count == 0:
-            return (
-                f"Error: The specified old_text was not found in '{file_path}'."
-            )
+            return f"Error: The specified old_text was not found in '{file_path}'."
         if count > 1:
             return (
                 f"Error: old_text appears {count} times in '{file_path}'. "

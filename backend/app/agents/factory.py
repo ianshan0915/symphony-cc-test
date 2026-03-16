@@ -270,8 +270,7 @@ def create_deep_agent(
     memory_store = store if store is not None else get_memory_store()
 
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "checkpointer=%s, store=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, checkpointer=%s, store=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),

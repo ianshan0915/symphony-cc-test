@@ -537,9 +537,7 @@ async def test_materialize_nonexistent_ids(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_materialize_integrates_with_skill_parser(
-    db_session: AsyncSession, test_user: User
-):
+async def test_materialize_integrates_with_skill_parser(db_session: AsyncSession, test_user: User):
     """Materialized skills should be parseable by the existing skills module."""
     import shutil
     from pathlib import Path

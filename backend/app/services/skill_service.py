@@ -177,7 +177,5 @@ class SkillService:
             materialized_paths.append(str(skill_dir))
             logger.info("Materialized skill '%s' to %s", skill.name, skill_dir)
 
-        logger.info(
-            "Materialized %d skill(s) to %s", len(materialized_paths), base_dir
-        )
+        logger.info("Materialized %d skill(s) to %s", len(materialized_paths), base_dir)
         return materialized_paths

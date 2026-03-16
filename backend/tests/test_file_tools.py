@@ -5,7 +5,6 @@ Uses an in-memory SQLite database so no external services are required.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import types
 import uuid
@@ -22,7 +21,6 @@ if "deepagents" not in sys.modules:
     sys.modules["deepagents"] = _stub
 
 from app.db.base import Base
-from app.models.file_artifact import FileArtifact
 
 # ---------------------------------------------------------------------------
 # Fixtures — in-memory async SQLite engine
