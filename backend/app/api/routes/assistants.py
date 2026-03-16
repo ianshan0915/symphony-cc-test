@@ -31,7 +31,7 @@ async def create_assistant(
     try:
         assistant = await service.create(body, user_id=current_user.id)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return AssistantOut.model_validate(assistant)
 
 
@@ -91,9 +91,9 @@ async def update_assistant(
             assistant_id, body, user_id=current_user.id
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if assistant is None:
         raise HTTPException(status_code=404, detail="Assistant not found")
     return AssistantOut.model_validate(assistant)
@@ -113,6 +113,6 @@ async def delete_assistant(
     try:
         deleted = await service.delete(assistant_id, user_id=current_user.id)
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Assistant not found")

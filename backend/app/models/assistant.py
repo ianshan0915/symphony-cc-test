@@ -18,8 +18,16 @@ from app.models.types import GUID, JSONType
 assistant_skills = Table(
     "assistant_skills",
     Base.metadata,
-    Column("assistant_id", GUID(), ForeignKey("assistants.id", ondelete="CASCADE"), primary_key=True),
-    Column("skill_id", GUID(), ForeignKey("skills.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "assistant_id", GUID(),
+        ForeignKey("assistants.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "skill_id", GUID(),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 # ---------------------------------------------------------------------------
