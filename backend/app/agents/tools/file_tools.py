@@ -262,7 +262,7 @@ async def delete_file(
         result = await session.execute(stmt)
         await session.commit()
 
-    if result.rowcount == 0:  # type: ignore[union-attr]
+    if result.rowcount == 0:  # type: ignore[attr-defined]
         return f"Error: File not found at '{file_path}'."
 
     return f"File deleted: '{file_path}'."

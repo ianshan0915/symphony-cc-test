@@ -19,8 +19,9 @@ from app.api.deps import (
 )
 from app.models.message import Message
 from app.models.thread import Thread
-from app.services.agent_service import SSEEvent, agent_service
+from app.services.agent_service import agent_service
 from app.services.assistant_service import AssistantService
+from app.services.sse import SSEEvent
 from app.services.thread_service import ThreadService
 
 logger = logging.getLogger(__name__)
