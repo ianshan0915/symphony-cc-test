@@ -63,6 +63,13 @@ export interface AgentTask {
   completedAt?: string;
 }
 
+/** Brief skill info embedded in assistant configuration */
+export interface SkillBrief {
+  id: string;
+  name: string;
+  description: string;
+}
+
 /** Assistant configuration (mirrors backend AssistantOut) */
 export interface AssistantConfig {
   id: string;
@@ -72,8 +79,7 @@ export interface AssistantConfig {
   system_prompt: string | null;
   tools_enabled: string[];
   metadata: Record<string, unknown>;
-  temperature: number | null;
-  max_tokens: number | null;
+  skills: SkillBrief[];
   is_active: boolean;
   created_at: string;
   updated_at: string;

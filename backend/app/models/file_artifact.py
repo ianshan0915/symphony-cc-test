@@ -4,9 +4,11 @@ Stores file artifacts created by the agent so they can be retrieved,
 listed, and managed through the file tools.
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, Index, String, Text, func
@@ -29,7 +31,7 @@ class FileArtifact(Base):
     thread_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
@@ -58,7 +60,7 @@ class FileArtifactCreate(BaseModel):
     thread_id: uuid.UUID
     file_path: str
     content: str = ""
-    mime_type: str | None = None
+    mime_type: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -71,7 +73,7 @@ class FileArtifactOut(BaseModel):
     thread_id: uuid.UUID
     file_path: str
     content: str
-    mime_type: str | None = None
+    mime_type: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_")
     is_deleted: bool = False
     created_at: datetime

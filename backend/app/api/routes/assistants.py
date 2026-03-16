@@ -26,7 +26,10 @@ async def create_assistant(
     service: AssistantService = Depends(get_assistant_service),
 ) -> AssistantOut:
     """Create a new assistant configuration."""
-    assistant = await service.create(body)
+    try:
+        assistant = await service.create(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     return AssistantOut.model_validate(assistant)
 
 
@@ -65,7 +68,10 @@ async def update_assistant(
     service: AssistantService = Depends(get_assistant_service),
 ) -> AssistantOut:
     """Update an assistant configuration."""
-    assistant = await service.update(assistant_id, body)
+    try:
+        assistant = await service.update(assistant_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if assistant is None:
         raise HTTPException(status_code=404, detail="Assistant not found")
     return AssistantOut.model_validate(assistant)

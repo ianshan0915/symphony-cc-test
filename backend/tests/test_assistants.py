@@ -16,7 +16,6 @@ ASSISTANT_PAYLOAD = {
     "system_prompt": "You are a helpful assistant.",
     "tools_enabled": ["web_search"],
     "metadata": {"env": "test"},
-    "temperature": 0.7,
 }
 
 
@@ -34,7 +33,11 @@ async def test_create_assistant(client: AsyncClient):
     assert data["model"] == "gpt-4o"
     assert data["tools_enabled"] == ["web_search"]
     assert data["is_active"] is True
+    assert data["skills"] == []
     assert "id" in data
+    # temperature and max_tokens should not be present
+    assert "temperature" not in data
+    assert "max_tokens" not in data
 
 
 @pytest.mark.asyncio
@@ -44,6 +47,7 @@ async def test_create_assistant_minimal(client: AsyncClient):
     data = response.json()
     assert data["name"] == "Minimal"
     assert data["model"] == "gpt-4o"  # default
+    assert data["skills"] == []
 
 
 @pytest.mark.asyncio
@@ -153,12 +157,11 @@ async def test_update_assistant(client: AsyncClient):
 
     response = await client.put(
         f"/assistants/{assistant_id}",
-        json={"name": "Updated Name", "temperature": 0.2},
+        json={"name": "Updated Name"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Updated Name"
-    assert data["temperature"] == 0.2
     # Unchanged fields remain the same
     assert data["model"] == "gpt-4o"
 
