@@ -21,7 +21,7 @@ from app.api.deps import (
 from app.models.message import Message
 from app.models.thread import Thread
 from app.models.user import User
-from app.services.agent_service import agent_service
+from app.services.agent_service import _DECISION_PAST_TENSE, agent_service
 from app.services.assistant_service import AssistantService
 from app.services.sse import SSEEvent
 from app.services.thread_service import ThreadService
@@ -277,8 +277,7 @@ async def submit_approval_decision(
             detail=f"No pending approval found for thread {body.thread_id}",
         )
 
-    decision_labels = {"approve": "approved", "edit": "edited", "reject": "rejected"}
-    decision_label = decision_labels.get(body.decision, body.decision)
+    decision_label = _DECISION_PAST_TENSE.get(body.decision, body.decision)
     return ApprovalDecisionResponse(
         success=True,
         thread_id=body.thread_id,

@@ -53,6 +53,13 @@ INTERRUPT_ON: dict[str, Any] = {
 # Backward-compatible alias for code that references the old constant.
 TOOLS_REQUIRING_APPROVAL: set[str] = set(INTERRUPT_ON)
 
+# Maps decision type → past-tense label used in approval_result SSE events.
+_DECISION_PAST_TENSE: dict[str, str] = {
+    "approve": "approved",
+    "edit": "edited",
+    "reject": "rejected",
+}
+
 
 # ---------------------------------------------------------------------------
 # Pending interrupt state (lightweight replacement for PendingApproval)
@@ -339,69 +346,51 @@ class AgentService:
                     interrupt_data=interrupt_data,
                 )
                 self._pending_interrupts[thread_id] = pending
-
-                # Emit approval_required event (backward compatible + new fields)
-                yield SSEEvent(
-                    event="approval_required",
-                    data={
-                        "approval_id": approval_id,
-                        "thread_id": thread_id,
-                        "tool_name": tool_name,
-                        "tool_args": (
-                            tool_args if isinstance(tool_args, dict) else {"input": tool_args}
-                        ),
-                        "run_id": run_id,
-                        "allowed_decisions": allowed_decisions,
-                    },
-                )
-
-                # Wait for user decision (with timeout)
                 try:
-                    await asyncio.wait_for(
-                        pending.decision_event.wait(),
-                        timeout=300.0,  # 5 minute timeout
+                    # Emit approval_required event (backward compatible + new fields)
+                    yield SSEEvent(
+                        event="approval_required",
+                        data={
+                            "approval_id": approval_id,
+                            "thread_id": thread_id,
+                            "tool_name": tool_name,
+                            "tool_args": (
+                                tool_args if isinstance(tool_args, dict) else {"input": tool_args}
+                            ),
+                            "run_id": run_id,
+                            "allowed_decisions": allowed_decisions,
+                        },
                     )
-                except TimeoutError:
-                    pending.decision = {
-                        "type": "reject",
-                        "reason": "Approval timed out after 5 minutes",
-                    }
 
-                # Clean up pending interrupt
-                self._pending_interrupts.pop(thread_id, None)
+                    # Wait for user decision (with timeout)
+                    try:
+                        await asyncio.wait_for(
+                            pending.decision_event.wait(),
+                            timeout=300.0,  # 5 minute timeout
+                        )
+                    except TimeoutError:
+                        pending.decision = {
+                            "type": "reject",
+                            "reason": "Approval timed out after 5 minutes",
+                        }
+                finally:
+                    # Always clean up, even if the stream is cancelled mid-wait
+                    self._pending_interrupts.pop(thread_id, None)
 
                 decision = pending.decision or {"type": "reject", "reason": "No decision received"}
                 dtype = decision.get("type", "reject")
 
-                if dtype == "approve":
-                    yield SSEEvent(
-                        event="approval_result",
-                        data={
-                            "approval_id": approval_id,
-                            "decision": "approved",
-                            "tool_name": tool_name,
-                        },
-                    )
-                elif dtype == "edit":
-                    yield SSEEvent(
-                        event="approval_result",
-                        data={
-                            "approval_id": approval_id,
-                            "decision": "edited",
-                            "tool_name": tool_name,
-                            "modified_args": decision.get("modified_args", {}),
-                        },
-                    )
-                else:
-                    yield SSEEvent(
-                        event="approval_result",
-                        data={
-                            "approval_id": approval_id,
-                            "decision": "rejected",
-                            "tool_name": tool_name,
-                            "reason": decision.get("reason") or "User rejected the action",
-                        },
-                    )
+                # Build approval_result event data based on decision type
+                result_data: dict[str, Any] = {
+                    "approval_id": approval_id,
+                    "decision": _DECISION_PAST_TENSE.get(dtype, dtype),
+                    "tool_name": tool_name,
+                }
+                if dtype == "edit":
+                    result_data["modified_args"] = decision.get("modified_args", {})
+                elif dtype == "reject":
+                    result_data["reason"] = decision.get("reason") or "User rejected the action"
+                yield SSEEvent(event="approval_result", data=result_data)
 
                 # Resume the graph with the appropriate command
                 agent_input = self._build_resume_command(decision)
