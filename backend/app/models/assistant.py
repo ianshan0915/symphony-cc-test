@@ -19,12 +19,14 @@ assistant_skills = Table(
     "assistant_skills",
     Base.metadata,
     Column(
-        "assistant_id", GUID(),
+        "assistant_id",
+        GUID(),
         ForeignKey("assistants.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column(
-        "skill_id", GUID(),
+        "skill_id",
+        GUID(),
         ForeignKey("skills.id", ondelete="CASCADE"),
         primary_key=True,
     ),
@@ -101,6 +103,7 @@ class AssistantUpdate(BaseModel):
 
 # Import SkillOut here to avoid circular imports at module level
 # We use a forward reference pattern.
+
 
 class AssistantOut(BaseModel):
     """Schema for assistant configuration responses."""

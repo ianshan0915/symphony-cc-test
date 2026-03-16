@@ -47,9 +47,7 @@ async def list_assistants(
     Returns system assistants (visible to all) plus the current user's
     own assistants.
     """
-    assistants, total = await service.list(
-        user_id=current_user.id, offset=offset, limit=limit
-    )
+    assistants, total = await service.list(user_id=current_user.id, offset=offset, limit=limit)
     return AssistantListResponse(
         assistants=[AssistantOut.model_validate(a) for a in assistants],
         total=total,
@@ -87,9 +85,7 @@ async def update_assistant(
     read-only.
     """
     try:
-        assistant = await service.update(
-            assistant_id, body, user_id=current_user.id
-        )
+        assistant = await service.update(assistant_id, body, user_id=current_user.id)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:

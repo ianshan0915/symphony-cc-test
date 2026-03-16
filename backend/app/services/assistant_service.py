@@ -40,9 +40,7 @@ class AssistantService:
         found_ids = {s.id for s in found}
         missing = set(skill_ids) - found_ids
         if missing:
-            raise ValueError(
-                f"Skills not found or inactive: {[str(m) for m in missing]}"
-            )
+            raise ValueError(f"Skills not found or inactive: {[str(m) for m in missing]}")
         return found
 
     async def create(self, data: AssistantCreate, *, user_id: uuid.UUID | None = None) -> Assistant:
@@ -88,9 +86,7 @@ class AssistantService:
             )
         )
         if user_id is not None:
-            query = query.where(
-                or_(Assistant.user_id.is_(None), Assistant.user_id == user_id)
-            )
+            query = query.where(or_(Assistant.user_id.is_(None), Assistant.user_id == user_id))
 
         result = await self._session.execute(query)
         return result.scalar_one_or_none()
@@ -185,9 +181,7 @@ class AssistantService:
         await self._session.refresh(assistant)
         return assistant
 
-    async def delete(
-        self, assistant_id: uuid.UUID, *, user_id: uuid.UUID | None = None
-    ) -> bool:
+    async def delete(self, assistant_id: uuid.UUID, *, user_id: uuid.UUID | None = None) -> bool:
         """Soft-delete an assistant configuration (set is_active=False).
 
         Only user-owned assistants can be deleted.  System assistants
@@ -271,9 +265,7 @@ async def seed_default_assistants(session: AsyncSession) -> None:
         return
 
     # Pre-fetch all active skills for assignment
-    skill_result = await session.execute(
-        select(Skill).where(Skill.is_active.is_(True))
-    )
+    skill_result = await session.execute(select(Skill).where(Skill.is_active.is_(True)))
     all_skills = {s.name: s for s in skill_result.scalars().all()}
 
     logger.info("Seeding %d default assistants", len(DEFAULT_ASSISTANTS))
