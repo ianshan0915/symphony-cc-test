@@ -428,7 +428,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
             <button
               type="button"
               onClick={() => {
-                setMemoryUpdated(false);
+                if (memoryUpdated) setMemoryUpdated(false);
                 setIsMemoryOpen(true);
               }}
               title={

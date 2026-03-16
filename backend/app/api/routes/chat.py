@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.middleware import get_agents_md
+from app.agents.middleware import get_agents_md_modified_at
 from app.api.deps import (
     get_current_user,
     get_db_session,
@@ -204,13 +204,12 @@ async def chat_stream(
         full_content = ""
         tool_calls: list[Any] = []
 
-        # Snapshot memory content before the agent runs so we can detect
-        # whether the agent saved new memories during this turn.
+        # Snapshot the AGENTS.md modification timestamp before the agent runs.
+        # We compare timestamps (not full content) after the run to detect
+        # whether the agent saved new memories — avoids reconstructing and
+        # comparing potentially large content strings.
         user_id_str = str(current_user.id)
-        try:
-            memory_before = await get_agents_md(user_id=user_id_str)
-        except Exception:
-            memory_before = None
+        modified_at_before = await get_agents_md_modified_at(user_id=user_id_str)
 
         async for sse_event in agent_service.stream_response(
             thread_id=str(thread.id),
@@ -227,16 +226,15 @@ async def chat_stream(
             yield sse_event.encode()
 
         # Emit memory_updated if the agent changed the user's AGENTS.md.
-        if memory_before is not None:
-            try:
-                memory_after = await get_agents_md(user_id=user_id_str)
-                if memory_after != memory_before:
-                    yield SSEEvent(
-                        event="memory_updated",
-                        data={"thread_id": str(thread.id)},
-                    ).encode()
-            except Exception:
-                logger.debug("Failed to compare memory content after agent run", exc_info=True)
+        try:
+            modified_at_after = await get_agents_md_modified_at(user_id=user_id_str)
+            if modified_at_after is not None and modified_at_after != modified_at_before:
+                yield SSEEvent(
+                    event="memory_updated",
+                    data={"thread_id": str(thread.id)},
+                ).encode()
+        except Exception:
+            logger.debug("Failed to compare AGENTS.md timestamps after agent run", exc_info=True)
 
         # Persist assistant response after streaming completes
         if full_content:
