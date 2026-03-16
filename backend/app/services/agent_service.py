@@ -32,7 +32,7 @@ from app.agents.deepagents_adapter import (
     map_message_chunk,
     map_state_update,
 )
-from app.agents.factory import create_deep_agent
+from app.agents.factory import UserContext, create_deep_agent
 from app.models.thread import Thread
 from app.services.sse import SSEEvent
 
@@ -196,6 +196,7 @@ class AgentService:
         active_agent: CompiledStateGraph,  # type: ignore[type-arg]
         agent_input: Any,
         config: dict[str, Any],
+        context: UserContext | None = None,
     ) -> AsyncIterator[tuple[str, Any, tuple[str, ...] | None]]:
         """Iterate over agent ``astream()`` with V2 streaming and subgraph support.
 
@@ -208,10 +209,18 @@ class AgentService:
         the supervisor and its subagents.  The ``ns`` field on each
         event identifies which subagent produced it (e.g.
         ``("researcher:abc123",)``).
+
+        Parameters
+        ----------
+        context:
+            Optional ``UserContext`` passed through to ``astream()`` so
+            deepagents' ``StoreBackend`` can resolve the per-user namespace
+            ``("filesystem", user_id)`` for AGENTS.md reads and writes.
         """
         async for event in active_agent.astream(
             agent_input,
             config=config,  # type: ignore[call-overload]
+            context=context,
             stream_mode=["messages", "updates"],
             subgraphs=True,
             version="v2",
@@ -269,6 +278,7 @@ class AgentService:
         user_message: str,
         thread: Thread | None = None,
         assistant_type: str | None = None,
+        user_id: str | None = None,
     ) -> AsyncIterator[SSEEvent]:
         """Stream agent response as SSE events.
 
@@ -287,6 +297,12 @@ class AgentService:
         assistant_type:
             Agent specialization type (``"researcher"``, ``"coder"``,
             ``"writer"``, or ``"general"``).
+        user_id:
+            Authenticated user identifier.  When provided, a
+            ``UserContext(user_id=user_id)`` is passed to the agent so
+            ``StoreBackend`` resolves memory reads/writes to the user's own
+            namespace ``("filesystem", user_id)`` — matching exactly the
+            namespace written by ``PUT /memory``.
 
         Yields events in order:
         1. ``message_start`` — signals the beginning of an assistant turn.
@@ -304,6 +320,10 @@ class AgentService:
         config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
 
         agent_input: Any = {"messages": [HumanMessage(content=user_message)]}
+
+        # Build per-user runtime context so StoreBackend resolves the correct
+        # user-scoped namespace ("filesystem", user_id) for AGENTS.md reads.
+        agent_context: UserContext | None = UserContext(user_id=user_id) if user_id else None
 
         # Select the appropriate agent for the assistant type
         active_agent = self.get_agent(assistant_type)
@@ -324,7 +344,9 @@ class AgentService:
             while True:
                 interrupt_data: dict[str, Any] | None = None
 
-                async for mode, chunk, ns in self._stream_agent(active_agent, agent_input, config):
+                async for mode, chunk, ns in self._stream_agent(
+                    active_agent, agent_input, config, agent_context
+                ):
                     # Detect subagent namespace and emit lifecycle events
                     subagent_name = extract_subagent_namespace(ns) if ns else None
                     if subagent_name and subagent_name not in active_subagents:

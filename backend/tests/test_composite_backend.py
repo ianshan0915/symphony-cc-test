@@ -44,8 +44,10 @@ class TestMakeDefaultBackend:
         # StateBackend should be created with the runtime
         mock_state.assert_called_once_with(mock_rt)
 
-        # StoreBackend should be created with the runtime
-        mock_store_backend.assert_called_once_with(mock_rt)
+        # StoreBackend should be created with the runtime and namespace factory
+        from app.agents.factory import _user_ns_factory
+
+        mock_store_backend.assert_called_once_with(mock_rt, namespace=_user_ns_factory)
 
         # CompositeBackend should be created with default=StateBackend, routes
         mock_composite.assert_called_once()

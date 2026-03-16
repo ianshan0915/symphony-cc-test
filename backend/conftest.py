@@ -21,6 +21,7 @@ if "deepagents" not in sys.modules:
 
     # --- deepagents.backends ---
     _backends = types.ModuleType("deepagents.backends")
+    _backends.BackendContext = MagicMock(name="BackendContext")  # type: ignore[attr-defined]
     _backends.CompositeBackend = MagicMock(name="CompositeBackend")  # type: ignore[attr-defined]
     _backends.StateBackend = MagicMock(name="StateBackend")  # type: ignore[attr-defined]
     _backends.StoreBackend = MagicMock(name="StoreBackend")  # type: ignore[attr-defined]

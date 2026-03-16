@@ -10,11 +10,12 @@ import hashlib
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
@@ -31,6 +32,44 @@ from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Runtime context schema — carries per-request data (e.g. user_id) into the
+# agent's LangGraph runtime so backend factories can resolve user-scoped
+# namespaces without coupling to LangGraph config internals.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UserContext:
+    """Runtime context for deep agents, carrying the authenticated user's ID.
+
+    Passed as ``context=UserContext(user_id=...)`` when invoking the agent.
+    The ``_user_ns_factory`` below reads ``ctx.runtime.context.user_id`` to
+    resolve the per-user ``("filesystem", user_id)`` store namespace so that
+    ``StoreBackend`` reads/writes to the correct user's AGENTS.md.
+    """
+
+    user_id: str | None = None
+
+
+def _user_ns_factory(ctx: BackendContext) -> tuple[str, ...]:
+    """Resolve the LangGraph store namespace for a backend operation.
+
+    When a ``user_id`` is present in the runtime context the namespace is
+    scoped to that user: ``("filesystem", user_id)``.  This matches exactly
+    the namespace written by ``set_agents_md(content, user_id=...)`` in
+    ``middleware.py``, so the agent reads the same data the API writes.
+
+    Falls back to the global ``("filesystem",)`` namespace when no user
+    context is available (e.g. background jobs, tests without auth context).
+    """
+    context = getattr(ctx.runtime, "context", None)
+    user_id = getattr(context, "user_id", None) if context is not None else None
+    if user_id:
+        return ("filesystem", str(user_id))
+    return ("filesystem",)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +248,11 @@ def _make_default_backend() -> Any:
     def _backend_factory(rt: Any) -> CompositeBackend:
         return CompositeBackend(
             default=StateBackend(rt),
-            routes={"/memories/": StoreBackend(rt)},
+            # Pass an explicit namespace factory so StoreBackend resolves the
+            # per-user namespace ("filesystem", user_id) instead of the legacy
+            # global ("filesystem",).  This ensures the agent reads from the
+            # same namespace the API writes to via set_agents_md(user_id=...).
+            routes={"/memories/": StoreBackend(rt, namespace=_user_ns_factory)},
         )
 
     return _backend_factory
@@ -361,6 +404,12 @@ def create_deep_agent(
         "checkpointer": saver,
         "store": memory_store,
         "backend": agent_backend,
+        # context_schema=UserContext allows the LangGraph runtime to accept a
+        # UserContext instance at invocation time (passed as
+        # context=UserContext(user_id=...)).  The _user_ns_factory above reads
+        # ctx.runtime.context.user_id to resolve the per-user store namespace
+        # so the agent loads the correct user's AGENTS.md.
+        "context_schema": UserContext,
         # Load persistent memory from the store-backed /memories/ path.
         # The CompositeBackend routes /memories/ to StoreBackend so the file
         # survives across all threads.  The same path is used when seeding

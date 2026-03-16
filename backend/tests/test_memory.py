@@ -465,7 +465,7 @@ class TestPutMemoryEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# Factory integration tests — memory= parameter
+# Factory integration tests — memory= parameter and context_schema
 # ---------------------------------------------------------------------------
 
 
@@ -531,3 +531,100 @@ class TestFactoryMemoryParameter:
         assert "store" in call_kwargs
         assert "checkpointer" in call_kwargs
         assert "backend" in call_kwargs
+
+    @patch("app.agents.factory._deepagents_create")
+    @patch("app.agents.factory._get_chat_model")
+    def test_context_schema_passed_for_user_namespace(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        """context_schema=UserContext must be passed so agents resolve per-user namespaces.
+
+        Without context_schema=UserContext, the LangGraph runtime does not know
+        to propagate UserContext objects from the invocation context parameter.
+        This means _user_ns_factory cannot read ctx.runtime.context.user_id and
+        StoreBackend falls back to the global ("filesystem",) namespace — silently
+        serving a different user's memory.
+        """
+        from app.agents.factory import UserContext, create_deep_agent
+
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
+
+        create_deep_agent()
+
+        call_kwargs = mock_da_create.call_args.kwargs
+        assert "context_schema" in call_kwargs, (
+            "context_schema must be passed to deepagents so the runtime accepts "
+            "UserContext instances and exposes user_id to the namespace factory"
+        )
+        assert call_kwargs["context_schema"] is UserContext
+
+
+# ---------------------------------------------------------------------------
+# Factory: _user_ns_factory namespace resolution
+# ---------------------------------------------------------------------------
+
+
+class TestUserNsFactory:
+    """Tests for _user_ns_factory — the namespace factory for StoreBackend."""
+
+    def test_returns_global_ns_when_no_context(self) -> None:
+        """Falls back to global ("filesystem",) when runtime has no context."""
+        from app.agents.factory import _user_ns_factory
+
+        ctx = MagicMock()
+        ctx.runtime.context = None
+        result = _user_ns_factory(ctx)
+        assert result == ("filesystem",)
+
+    def test_returns_user_ns_when_user_id_present(self) -> None:
+        """Returns ("filesystem", user_id) when context has a non-None user_id."""
+        from app.agents.factory import _user_ns_factory
+
+        ctx = MagicMock()
+        ctx.runtime.context = MagicMock(user_id="user-123")
+        result = _user_ns_factory(ctx)
+        assert result == ("filesystem", "user-123")
+
+    def test_returns_global_ns_when_user_id_none(self) -> None:
+        """Falls back to global namespace when context.user_id is None."""
+        from app.agents.factory import _user_ns_factory
+
+        ctx = MagicMock()
+        ctx.runtime.context = MagicMock(user_id=None)
+        result = _user_ns_factory(ctx)
+        assert result == ("filesystem",)
+
+    def test_different_users_produce_different_namespaces(self) -> None:
+        """Two different user_ids produce distinct namespaces."""
+        from app.agents.factory import _user_ns_factory
+
+        ctx_a = MagicMock()
+        ctx_a.runtime.context = MagicMock(user_id="user-a")
+        ctx_b = MagicMock()
+        ctx_b.runtime.context = MagicMock(user_id="user-b")
+
+        assert _user_ns_factory(ctx_a) != _user_ns_factory(ctx_b)
+
+    def test_namespace_matches_agents_md_namespace_helper(self) -> None:
+        """_user_ns_factory must produce the same namespace as _agents_md_namespace.
+
+        The API (PUT /memory) calls set_agents_md(content, user_id=user_id)
+        which uses _agents_md_namespace(user_id) = ("filesystem", user_id).
+        The agent's StoreBackend must use the identical namespace so reads
+        see what the API writes.
+        """
+        from app.agents.factory import _user_ns_factory
+        from app.agents.middleware import _agents_md_namespace
+
+        uid = "abc-123"
+        ctx = MagicMock()
+        ctx.runtime.context = MagicMock(user_id=uid)
+
+        factory_ns = _user_ns_factory(ctx)
+        middleware_ns = _agents_md_namespace(uid)
+        assert factory_ns == middleware_ns, (
+            f"Namespace mismatch: factory produces {factory_ns!r} but "
+            f"_agents_md_namespace produces {middleware_ns!r}. "
+            "The agent will silently read from the wrong namespace."
+        )
