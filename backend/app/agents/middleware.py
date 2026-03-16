@@ -17,16 +17,27 @@ Both backends are initialised once at application startup via
 
 AGENTS.md — persistent memory file
 -----------------------------------
-A global ``/AGENTS.md`` file is seeded into the store on first run.  Deep
-agents load this file at conversation start (via ``memory=["/AGENTS.md"]``)
-and can update it with learned preferences, project context, and conventions
-so the information persists across threads.  The ``GET /memory`` and
-``PUT /memory`` API endpoints expose this file for human editing.
+A global ``/memories/AGENTS.md`` file is seeded into the store on first run.
+Deep agents load this file at conversation start (via
+``memory=["/memories/AGENTS.md"]``), and can update it with learned
+preferences, project context, and conventions so the information persists
+across threads.
+
+The path ``/memories/AGENTS.md`` is intentional: the ``CompositeBackend`` in
+``factory.py`` routes all ``/memories/`` paths to ``StoreBackend``, which
+reads/writes files as LangGraph store items using the file path as the key
+and the namespace ``("filesystem",)`` (deepagents default).  Seeding and the
+API helpers must use the same namespace and key format so that deepagents can
+find and update the file.
+
+The ``GET /memory`` and ``PUT /memory`` API endpoints expose this file for
+human editing.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -40,11 +51,20 @@ logger = logging.getLogger(__name__)
 # AGENTS.md persistent memory constants
 # ---------------------------------------------------------------------------
 
-#: LangGraph store namespace for the global AGENTS.md memory file.
-AGENTS_MD_NAMESPACE: tuple[str, ...] = ("symphony", "memory")
+#: LangGraph store namespace used by ``StoreBackend`` (deepagents default).
+#:
+#: ``StoreBackend`` resolves its namespace via ``_get_namespace_legacy()`` which
+#: defaults to ``("filesystem",)`` when no ``assistant_id`` is present in the
+#: request config.  Our seed/get/set helpers must use this same namespace so
+#: that deepagents can find the seeded file at runtime.
+AGENTS_MD_NAMESPACE: tuple[str, ...] = ("filesystem",)
 
-#: Key within the namespace where AGENTS.md content is stored.
-AGENTS_MD_KEY: str = "agents_md"
+#: File path used as the store key for AGENTS.md.
+#:
+#: The path lives under ``/memories/`` so the ``CompositeBackend`` routes it
+#: to ``StoreBackend`` (persistent cross-thread storage) rather than the
+#: ephemeral ``StateBackend``.
+AGENTS_MD_KEY: str = "/memories/AGENTS.md"
 
 #: Default initial content seeded into the store when it is first created.
 DEFAULT_AGENTS_MD_CONTENT: str = """\
@@ -229,6 +249,28 @@ def reset_checkpointer() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _make_file_data(content: str, *, created_at: str | None = None) -> dict[str, Any]:
+    """Build a store value dict in the format expected by ``StoreBackend``.
+
+    ``StoreBackend`` stores files as ``{"content": list[str], "created_at": str,
+    "modified_at": str}`` where ``content`` is the file text split on newlines.
+    Our seed/get/set helpers must produce and consume values in this same format.
+
+    Parameters
+    ----------
+    content:
+        Full file text.
+    created_at:
+        ISO-formatted creation timestamp.  Defaults to *now* when ``None``.
+    """
+    now = datetime.now(UTC).isoformat()
+    return {
+        "content": content.split("\n"),
+        "created_at": created_at or now,
+        "modified_at": now,
+    }
+
+
 async def _seed_agents_md_if_missing() -> None:
     """Seed the default AGENTS.md content into the store if absent.
 
@@ -242,7 +284,7 @@ async def _seed_agents_md_if_missing() -> None:
             await store.aput(
                 AGENTS_MD_NAMESPACE,
                 AGENTS_MD_KEY,
-                {"content": DEFAULT_AGENTS_MD_CONTENT},
+                _make_file_data(DEFAULT_AGENTS_MD_CONTENT),
             )
             logger.info("Seeded default AGENTS.md content into store")
         else:
@@ -256,13 +298,21 @@ async def get_agents_md() -> str:
 
     Falls back to :data:`DEFAULT_AGENTS_MD_CONTENT` if the key is missing
     or unreadable (e.g. store not yet initialised).
+
+    The value stored by ``_seed_agents_md_if_missing`` and ``set_agents_md``
+    uses the ``StoreBackend`` file format: ``{"content": list[str], ...}``.
+    Lines are joined with ``"\\n"`` to reconstruct the original text.
     """
     store = get_memory_store()
     try:
         item = await store.aget(AGENTS_MD_NAMESPACE, AGENTS_MD_KEY)
         if item is not None:
             value = item.value if hasattr(item, "value") else item
-            return str(value.get("content", DEFAULT_AGENTS_MD_CONTENT))
+            raw = value.get("content", DEFAULT_AGENTS_MD_CONTENT)
+            # StoreBackend stores content as a list of lines
+            if isinstance(raw, list):
+                return "\n".join(raw)
+            return str(raw)
     except Exception:
         logger.warning("Failed to read AGENTS.md from store", exc_info=True)
     return DEFAULT_AGENTS_MD_CONTENT
@@ -271,16 +321,30 @@ async def get_agents_md() -> str:
 async def set_agents_md(content: str) -> None:
     """Write new AGENTS.md *content* to the store.
 
+    Preserves the original ``created_at`` timestamp if the file already
+    exists; otherwise creates a fresh timestamp.  The value is written in
+    ``StoreBackend`` file format so that deepagents can read it directly.
+
     Parameters
     ----------
     content:
         The full Markdown text to persist as the new AGENTS.md.
     """
     store = get_memory_store()
+    # Preserve creation timestamp from the existing item when available
+    created_at: str | None = None
+    try:
+        existing = await store.aget(AGENTS_MD_NAMESPACE, AGENTS_MD_KEY)
+        if existing is not None:
+            value = existing.value if hasattr(existing, "value") else existing
+            created_at = value.get("created_at")
+    except Exception:
+        logger.debug("Could not read existing AGENTS.md created_at", exc_info=True)
+
     await store.aput(
         AGENTS_MD_NAMESPACE,
         AGENTS_MD_KEY,
-        {"content": content},
+        _make_file_data(content, created_at=created_at),
     )
     logger.info("AGENTS.md updated in store (%d chars)", len(content))
 
