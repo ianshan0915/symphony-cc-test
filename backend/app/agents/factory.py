@@ -26,6 +26,7 @@ from app.agents.prompts import (
     get_tools_for_agent_type,
 )
 from app.agents.skills import resolve_skill_paths
+from app.agents.subagents import build_subagent_configs
 from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
@@ -227,7 +228,8 @@ def create_deep_agent(
     store: Any | None = None,
     backend: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
-    interrupt_on: dict[str, Any] | None = None,
+    subagents: list[dict[str, Any]] | None = None,
+    enable_subagents: bool = True,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -272,12 +274,16 @@ def create_deep_agent(
         ``/memories/`` paths (persistent cross-thread storage).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
-    interrupt_on:
-        Mapping of tool names to interrupt configurations for human-in-the-loop
-        approval.  Values can be ``True`` (default approve/reject) or a dict
-        with ``{"allowed_decisions": ["approve", "edit", "reject"]}``.
-        When provided, deepagents will automatically interrupt before executing
-        the specified tools and wait for a human decision.
+    subagents:
+        Explicit list of subagent configuration dicts to pass to the
+        ``deepagents`` framework.  Each dict should have ``name``,
+        ``model``, ``system_prompt``, and ``tools`` keys.  When ``None``
+        (default) and *enable_subagents* is ``True``, default subagent
+        configs for researcher, coder, and writer are built automatically.
+    enable_subagents:
+        Whether to attach subagent configurations to the supervisor agent.
+        Defaults to ``True``.  Set to ``False`` to create a standalone
+        agent without delegation capabilities (backwards-compatible mode).
 
     Returns
     -------
@@ -314,16 +320,24 @@ def create_deep_agent(
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
-    # Resolve filesystem backend: explicit > default CompositeBackend
-    agent_backend = backend if backend is not None else _make_default_backend()
+    # Resolve subagent configurations
+    resolved_subagents: list[dict[str, Any]] | None = None
+    if subagents is not None:
+        resolved_subagents = subagents
+    elif enable_subagents:
+        resolved_subagents = build_subagent_configs(
+            model_name=model_name,
+            model_kwargs=model_kwargs,
+        )
 
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "checkpointer=%s, store=%s, backend=%s",
+        "subagents=%d, checkpointer=%s, store=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
         len(skill_paths),
+        len(resolved_subagents) if resolved_subagents else 0,
         type(saver).__name__,
         type(memory_store).__name__,
         "factory" if callable(agent_backend) else type(agent_backend).__name__,
@@ -342,9 +356,10 @@ def create_deep_agent(
     if skill_paths:
         create_kwargs["skills"] = skill_paths
 
-    # Pass interrupt_on for native human-in-the-loop support
-    if interrupt_on is not None:
-        create_kwargs["interrupt_on"] = interrupt_on
+    # Pass subagent configs — the framework automatically provides a `task` tool
+    # to the supervisor agent for delegating work to subagents
+    if resolved_subagents:
+        create_kwargs["subagents"] = resolved_subagents
 
     agent = _deepagents_create(**create_kwargs)
 

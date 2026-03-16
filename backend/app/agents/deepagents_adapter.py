@@ -6,9 +6,11 @@ event vocabulary expected by the frontend (``ChatInterface.tsx``):
 * **messages** mode → ``token``, ``tool_call`` SSE events
 * **updates** mode → ``tool_result`` SSE events, plus interrupt detection
 
-Filesystem events from native filesystem tools (backed by
-``CompositeBackend``) are also mapped to ``file_event`` SSE events so the
-frontend can display file operations inline.
+V2 streaming with ``subgraphs=True`` adds a namespace (``ns``) field to
+events, enabling detection of subagent execution.  Subagent events are
+mapped to ``sub_agent_start``, ``sub_agent_progress``, and
+``sub_agent_end`` SSE events consumed by the frontend's
+``SubAgentProgress.tsx`` component.
 
 This module is intentionally stateless — all state lives in
 :class:`~app.services.agent_service.AgentService`.
@@ -207,3 +209,46 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
         value = {"data": value}
 
     return value
+
+
+# ---------------------------------------------------------------------------
+# Subagent namespace extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_subagent_namespace(ns: tuple[str, ...] | None) -> str | None:
+    """Extract the subagent name from a V2 streaming namespace tuple.
+
+    In V2 streaming with ``subgraphs=True``, events from subagents carry
+    a namespace tuple like ``("researcher:abc123",)`` where the prefix
+    before the colon is the subagent name.  Supervisor-level events have
+    an empty or ``None`` namespace.
+
+    Parameters
+    ----------
+    ns:
+        The namespace tuple from a V2 streaming event, or ``None``.
+
+    Returns
+    -------
+    str | None
+        The subagent name (e.g. ``"researcher"``) or ``None`` if the
+        event is from the supervisor.
+    """
+    if not ns:
+        return None
+
+    # The namespace is typically a tuple of strings like ("researcher:abc123",)
+    # or ("tools:abc123",).  We extract the name prefix before the colon.
+    first = ns[0]
+    if not isinstance(first, str):
+        return None
+
+    # Extract the subagent name (part before the colon or the full string)
+    name = first.split(":")[0] if ":" in first else first
+
+    # Skip internal LangGraph node names that aren't subagents
+    if name in ("tools", "__interrupt__", "agent"):
+        return None
+
+    return name if name else None
