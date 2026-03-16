@@ -14,6 +14,7 @@ from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
+from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
@@ -192,6 +193,28 @@ def _resolve_tools(
 # ---------------------------------------------------------------------------
 
 
+def _make_default_backend() -> Any:
+    """Create the default CompositeBackend factory for deep agents.
+
+    Returns a callable ``(ToolRuntime) -> CompositeBackend`` that routes:
+
+    * ``/memories/`` paths → ``StoreBackend`` (persistent, cross-thread storage)
+    * All other paths → ``StateBackend`` (ephemeral, checkpointed per-thread)
+
+    ``StoreBackend`` resolves the LangGraph store from the runtime at call
+    time (via ``rt.store``), so no store reference is needed at factory
+    construction time.
+    """
+
+    def _backend_factory(rt: Any) -> CompositeBackend:
+        return CompositeBackend(
+            default=StateBackend(rt),
+            routes={"/memories/": StoreBackend(rt)},
+        )
+
+    return _backend_factory
+
+
 def create_deep_agent(
     *,
     model_name: str | None = None,
@@ -203,6 +226,7 @@ def create_deep_agent(
     extra_skill_dirs: list[str] | None = None,
     checkpointer: Any | None = None,
     store: Any | None = None,
+    backend: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
     subagents: list[dict[str, Any]] | None = None,
     enable_subagents: bool = True,
@@ -243,6 +267,11 @@ def create_deep_agent(
         LangGraph memory store for cross-turn context persistence.
         Defaults to the shared store (``AsyncPostgresStore`` when available,
         otherwise ``InMemoryStore``).
+    backend:
+        Filesystem backend (or factory callable ``(ToolRuntime) -> Backend``)
+        for native filesystem tools. Defaults to a ``CompositeBackend`` with
+        ``StateBackend`` for general files and ``StoreBackend`` for
+        ``/memories/`` paths (persistent cross-thread storage).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
     subagents:
@@ -311,6 +340,7 @@ def create_deep_agent(
         len(resolved_subagents) if resolved_subagents else 0,
         type(saver).__name__,
         type(memory_store).__name__,
+        "factory" if callable(agent_backend) else type(agent_backend).__name__,
     )
 
     create_kwargs: dict[str, Any] = {
@@ -319,6 +349,7 @@ def create_deep_agent(
         "system_prompt": prompt,
         "checkpointer": saver,
         "store": memory_store,
+        "backend": agent_backend,
     }
 
     # Pass skills to deepagents if any were resolved

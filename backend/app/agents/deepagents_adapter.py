@@ -27,6 +27,21 @@ from app.services.sse import SSEEvent
 
 logger = logging.getLogger(__name__)
 
+# Native filesystem tool names provided by deepagents when a backend is
+# configured.  Used to emit ``file_event`` SSE events alongside the
+# standard ``tool_result`` so the frontend can render file operations.
+_FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob",
+        "grep",
+        "execute",
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Message-mode mapping
@@ -118,12 +133,34 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         for msg in messages:
             if isinstance(msg, ToolMessage):
+                content = str(msg.content)
+                tool_name = getattr(msg, "name", None) or ""
+                run_id = getattr(msg, "tool_call_id", "")
+
+                # Emit file_event for native filesystem tool results so the
+                # frontend can render file operations inline.
+                if tool_name in _FILESYSTEM_TOOL_NAMES:
+                    events.append(
+                        SSEEvent(
+                            event="file_event",
+                            data={
+                                "run_id": run_id,
+                                "tool_name": tool_name,
+                                "output": content,
+                            },
+                        )
+                    )
+
+                # With CompositeBackend, deepagents offloads large tool
+                # outputs to the filesystem automatically (returning a
+                # pointer instead of inline content).  The blunt 2K
+                # truncation is therefore no longer needed.
                 events.append(
                     SSEEvent(
                         event="tool_result",
                         data={
-                            "run_id": getattr(msg, "tool_call_id", ""),
-                            "output": str(msg.content)[:2000],
+                            "run_id": run_id,
+                            "output": content,
                         },
                     )
                 )
@@ -139,14 +176,19 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
     """Extract interrupt data from a LangGraph *updates*-mode payload.
 
-    When a deepagents tool calls ``interrupt()``, the updates stream
-    yields a special ``__interrupt__`` key containing the interrupt value.
+    When deepagents' native ``interrupt_on`` fires (or a tool manually calls
+    ``interrupt()``), the updates stream yields a special ``__interrupt__``
+    key containing the interrupt value.
+
+    The returned dict is normalised to always contain at least
+    ``tool_name`` and ``tool_args``.  Native ``interrupt_on`` payloads may
+    also carry ``allowed_decisions``.
 
     Returns
     -------
     dict | None
-        The interrupt payload (tool_name, tool_args, etc.) or ``None``
-        if the update does not represent an interrupt.
+        The interrupt payload (tool_name, tool_args, allowed_decisions, etc.)
+        or ``None`` if the update does not represent an interrupt.
     """
     interrupts = update.get("__interrupt__")
     if not interrupts:
