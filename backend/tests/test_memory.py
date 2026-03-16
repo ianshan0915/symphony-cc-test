@@ -30,6 +30,7 @@ from app.agents.middleware import (
     _make_file_data,
     _seed_agents_md_if_missing,
     get_agents_md,
+    get_agents_md_modified_at,
     set_agents_md,
 )
 
@@ -261,6 +262,74 @@ class TestAgentsMdAccessors:
             await set_agents_md(exact)
             result = await get_agents_md()
         assert result == exact
+
+
+# ---------------------------------------------------------------------------
+# get_agents_md_modified_at tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetAgentsMdModifiedAt:
+    """Tests for the get_agents_md_modified_at helper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_store_is_empty(self) -> None:
+        """Returns None when no AGENTS.md exists for the user."""
+        store = await _make_fresh_store()
+        with patch.object(mw, "_memory_store", store):
+            result = await get_agents_md_modified_at(user_id="no-such-user")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_timestamp_after_write(self) -> None:
+        """Returns an ISO timestamp string after content is written."""
+        store = await _make_fresh_store()
+        uid = "user-ts-" + str(uuid.uuid4())
+        with patch.object(mw, "_memory_store", store):
+            await set_agents_md("# Memory", user_id=uid)
+            ts = await get_agents_md_modified_at(user_id=uid)
+        assert ts is not None
+        assert isinstance(ts, str)
+        # Should be a non-empty ISO-formatted string
+        assert len(ts) > 0
+
+    @pytest.mark.asyncio
+    async def test_timestamp_changes_after_update(self) -> None:
+        """The timestamp returned after a second write differs from the first."""
+        import asyncio
+
+        store = await _make_fresh_store()
+        uid = "user-ts2-" + str(uuid.uuid4())
+        with patch.object(mw, "_memory_store", store):
+            await set_agents_md("# First", user_id=uid)
+            ts_before = await get_agents_md_modified_at(user_id=uid)
+            # Tiny sleep ensures the clock advances between writes
+            await asyncio.sleep(0.01)
+            await set_agents_md("# Second", user_id=uid)
+            ts_after = await get_agents_md_modified_at(user_id=uid)
+        assert ts_before is not None
+        assert ts_after is not None
+        assert ts_after != ts_before
+
+    @pytest.mark.asyncio
+    async def test_scoped_by_user_id(self) -> None:
+        """Returns None for a user who has no memory even when another user does."""
+        store = await _make_fresh_store()
+        uid_a = "user-a-ts-" + str(uuid.uuid4())
+        uid_b = "user-b-ts-" + str(uuid.uuid4())
+        with patch.object(mw, "_memory_store", store):
+            await set_agents_md("# A's memory", user_id=uid_a)
+            ts_b = await get_agents_md_modified_at(user_id=uid_b)
+        assert ts_b is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_store_error(self) -> None:
+        """Returns None gracefully when the store raises."""
+        broken_store = MagicMock()
+        broken_store.aget = AsyncMock(side_effect=RuntimeError("store unavailable"))
+        with patch.object(mw, "_memory_store", broken_store):
+            result = await get_agents_md_modified_at(user_id="any-user")
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
