@@ -122,7 +122,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         }
         if settings.anthropic_base_url:
             anthropic_kwargs["anthropic_api_url"] = settings.anthropic_base_url
-        return ChatAnthropic(**(anthropic_kwargs | kwargs))  # type: ignore[no-any-return]
+        return ChatAnthropic(**(anthropic_kwargs | kwargs))  # type: ignore[no-any-return, unused-ignore]
 
     # Default to OpenAI-compatible models
     try:
@@ -134,7 +134,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         ) from exc
     openai_kwargs: dict[str, Any] = {
         "model": model,
-        "api_key": settings.openai_api_key or None,  # type: ignore[arg-type]
+        "api_key": settings.openai_api_key or None,  # type: ignore[arg-type, unused-ignore]
         "streaming": True,
     }
     if settings.openai_base_url:
@@ -263,15 +263,14 @@ def create_deep_agent(
     skill_paths = resolve_skill_paths(
         skills=skills,
         assistant_type=assistant_type,
-        extra_skill_dirs=extra_skill_dirs,
+        extra_skill_dirs=extra_skill_dirs,  # type: ignore[arg-type]
     )
 
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "checkpointer=%s, store=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, checkpointer=%s, store=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),

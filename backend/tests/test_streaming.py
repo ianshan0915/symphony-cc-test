@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
-from app.services.agent_service import AgentService, PendingApproval
+from app.services.agent_service import AgentService
 from app.services.sse import SSEEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -126,7 +125,7 @@ class TestStreamResponseBasic:
 
         async def failing_astream(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
             raise RuntimeError("LLM unavailable")
-            yield  # make it a generator  # noqa: RUF028
+            yield  # make it a generator
 
         mock_agent.astream = failing_astream
         svc = AgentService(agent=mock_agent)

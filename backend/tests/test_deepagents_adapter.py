@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from app.agents.deepagents_adapter import (
@@ -13,7 +12,6 @@ from app.agents.deepagents_adapter import (
     map_message_chunk,
     map_state_update,
 )
-
 
 # ---------------------------------------------------------------------------
 # map_message_chunk tests
@@ -66,9 +64,7 @@ class TestMapMessageChunk:
     def test_token_and_tool_call_together(self) -> None:
         chunk = AIMessageChunk(
             content="Thinking...",
-            tool_call_chunks=[
-                {"name": "calculator", "args": "{}", "id": "call_2", "index": 0}
-            ],
+            tool_call_chunks=[{"name": "calculator", "args": "{}", "id": "call_2", "index": 0}],
         )
         events = map_message_chunk(chunk, {})
         assert len(events) == 2

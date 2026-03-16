@@ -70,7 +70,7 @@ class AssistantService:
 
         # Sort default assistants first (stable sort preserves created_at order)
         assistants.sort(
-            key=lambda a: (0 if (a.metadata_ or {}).get("is_default") is True else 1),
+            key=lambda a: 0 if (a.metadata_ or {}).get("is_default") is True else 1,
         )
 
         return assistants, total

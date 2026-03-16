@@ -6,7 +6,7 @@ listed, and managed through the file tools.
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, Index, String, Text, func
@@ -14,7 +14,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.types import GUID, JSONType
-
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM model
@@ -30,7 +29,7 @@ class FileArtifact(Base):
     thread_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
         "metadata", JSONType(), nullable=False, default=dict
     )
@@ -42,9 +41,7 @@ class FileArtifact(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_file_artifacts_thread_path", "thread_id", "file_path"),
-    )
+    __table_args__ = (Index("ix_file_artifacts_thread_path", "thread_id", "file_path"),)
 
     def __repr__(self) -> str:
         return f"<FileArtifact id={self.id} path={self.file_path!r}>"
@@ -61,8 +58,8 @@ class FileArtifactCreate(BaseModel):
     thread_id: uuid.UUID
     file_path: str
     content: str = ""
-    mime_type: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    mime_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class FileArtifactOut(BaseModel):
@@ -74,8 +71,8 @@ class FileArtifactOut(BaseModel):
     thread_id: uuid.UUID
     file_path: str
     content: str
-    mime_type: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, alias="metadata_")
+    mime_type: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_")
     is_deleted: bool = False
     created_at: datetime
     updated_at: datetime

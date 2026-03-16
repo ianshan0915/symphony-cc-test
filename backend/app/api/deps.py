@@ -20,6 +20,7 @@ from app.config import settings
 from app.db.session import async_session_factory
 from app.models.user import TokenPayload, User
 from app.services.assistant_service import AssistantService
+from app.services.skill_service import SkillService
 from app.services.thread_service import ThreadService
 
 logger = logging.getLogger(__name__)
@@ -176,6 +177,13 @@ async def get_assistant_service(
 ) -> AssistantService:
     """Return an AssistantService backed by the request-scoped DB session."""
     return AssistantService(session)
+
+
+async def get_skill_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> SkillService:
+    """Return a SkillService backed by the request-scoped DB session."""
+    return SkillService(session)
 
 
 # ---------------------------------------------------------------------------

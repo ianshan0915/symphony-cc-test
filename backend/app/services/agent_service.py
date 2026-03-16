@@ -154,12 +154,12 @@ class AgentService:
         """
         async for chunk in active_agent.astream(
             agent_input,
-            config=config,  # type: ignore[arg-type]
+            config=config,  # type: ignore[call-overload]
             stream_mode=["messages", "updates"],
         ):
             # With multiple stream modes, each chunk is a (mode, payload) tuple
             if isinstance(chunk, tuple) and len(chunk) == 2:
-                yield chunk  # type: ignore[misc]
+                yield chunk  # type: ignore[misc, unused-ignore]
             else:
                 # Fallback: treat as updates mode
                 yield ("updates", chunk)
