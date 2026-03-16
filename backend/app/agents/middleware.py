@@ -377,7 +377,13 @@ async def set_agents_md(content: str, user_id: str | None = None) -> None:
 
     store = get_memory_store()
     namespace = _agents_md_namespace(user_id)
-    # Preserve creation timestamp from the existing item when available
+    # Preserve creation timestamp from the existing item when available.
+    # Note: the read and subsequent write are not atomic — under concurrent
+    # PUT /memory requests for the same user it is possible for two writers to
+    # both read the same created_at and then both overwrite with their own
+    # content.  The last write wins for content (correct) and both preserve
+    # the original created_at (also correct).  No partial/corrupt state can
+    # result, so this non-atomicity is acceptable for a low-frequency endpoint.
     created_at: str | None = None
     try:
         existing = await store.aget(namespace, AGENTS_MD_KEY)
