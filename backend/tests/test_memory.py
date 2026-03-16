@@ -203,9 +203,7 @@ class TestPutMemoryEndpoint:
         assert response.json()["content"] == new_content
 
     @pytest.mark.asyncio
-    async def test_put_memory_persists_for_subsequent_get(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_put_memory_persists_for_subsequent_get(self, client: AsyncClient) -> None:
         """PUT /memory should persist so a subsequent GET returns the new value."""
         store = await _make_fresh_store()
         new_content = "# Persistent update"
@@ -238,9 +236,7 @@ class TestPutMemoryEndpoint:
         assert response.json()["content"] == ""
 
     @pytest.mark.asyncio
-    async def test_put_memory_service_unavailable_on_store_error(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_put_memory_service_unavailable_on_store_error(self, client: AsyncClient) -> None:
         """PUT /memory returns 503 when the store raises unexpectedly."""
         broken_store = MagicMock()
         broken_store.aput = AsyncMock(side_effect=RuntimeError("boom"))
