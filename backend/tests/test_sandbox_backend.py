@@ -181,7 +181,7 @@ class TestSandboxManager:
         manager.get_or_create("thread-1")
         assert manager.active_count == 1
 
-        asyncio.get_event_loop().run_until_complete(manager.cleanup("thread-1"))
+        asyncio.run(manager.cleanup("thread-1"))
         assert manager.active_count == 0
 
     @patch("app.agents.sandbox.create_sandbox_backend")
@@ -194,7 +194,7 @@ class TestSandboxManager:
         manager = SandboxManager()
         manager.get_or_create("thread-1")
 
-        asyncio.get_event_loop().run_until_complete(manager.cleanup("thread-1"))
+        asyncio.run(manager.cleanup("thread-1"))
         mock_backend.ateardown.assert_called_once()
 
     @patch("app.agents.sandbox.create_sandbox_backend")
@@ -207,7 +207,7 @@ class TestSandboxManager:
         manager = SandboxManager()
         manager.get_or_create("thread-1")
 
-        asyncio.get_event_loop().run_until_complete(manager.cleanup("thread-1"))
+        asyncio.run(manager.cleanup("thread-1"))
         mock_backend.teardown.assert_called_once()
 
     @patch("app.agents.sandbox.create_sandbox_backend")
@@ -215,7 +215,7 @@ class TestSandboxManager:
         """cleanup for an unknown thread_id should not raise."""
         manager = SandboxManager()
         # Should not raise even when thread is not tracked
-        asyncio.get_event_loop().run_until_complete(manager.cleanup("nonexistent"))
+        asyncio.run(manager.cleanup("nonexistent"))
 
     @patch("app.agents.sandbox.create_sandbox_backend")
     def test_cleanup_all_clears_all_sessions(self, mock_create: MagicMock) -> None:
@@ -228,7 +228,7 @@ class TestSandboxManager:
         manager.get_or_create("thread-3")
         assert manager.active_count == 3
 
-        asyncio.get_event_loop().run_until_complete(manager.cleanup_all())
+        asyncio.run(manager.cleanup_all())
         assert manager.active_count == 0
 
     @patch("app.agents.sandbox.create_sandbox_backend")
@@ -242,7 +242,7 @@ class TestSandboxManager:
         manager.get_or_create("thread-1")
 
         # Should not raise
-        asyncio.get_event_loop().run_until_complete(manager.cleanup("thread-1"))
+        asyncio.run(manager.cleanup("thread-1"))
         assert manager.active_count == 0
 
     def test_active_count_is_zero_initially(self) -> None:
@@ -315,6 +315,60 @@ class TestMakeDefaultBackendSandbox:
 
         call_kwargs = mock_composite.call_args.kwargs
         assert call_kwargs["default"] is mock_state.return_value
+
+    @patch("app.agents.sandbox.settings")
+    @patch("app.agents.factory.StoreBackend")
+    @patch("app.agents.factory.CompositeBackend")
+    @patch("app.agents.factory.sandbox_manager")
+    def test_sandbox_manager_used_when_thread_id_present(
+        self,
+        mock_manager: MagicMock,
+        mock_composite: MagicMock,
+        mock_store: MagicMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        """When thread_id is in the runtime config, sandbox_manager.get_or_create is used."""
+        mock_settings.sandbox_backend = "LOCAL_SHELL"
+        mock_sandbox = MagicMock()
+        mock_manager.get_or_create.return_value = mock_sandbox
+
+        from app.agents.factory import _make_default_backend
+
+        factory = _make_default_backend()
+        mock_rt = MagicMock()
+        mock_rt.config = {"configurable": {"thread_id": "test-thread-123"}}
+        factory(mock_rt)
+
+        mock_manager.get_or_create.assert_called_once_with("test-thread-123")
+        call_kwargs = mock_composite.call_args.kwargs
+        assert call_kwargs["default"] is mock_sandbox
+
+    @patch("app.agents.sandbox.settings")
+    @patch("app.agents.factory.StoreBackend")
+    @patch("app.agents.factory.CompositeBackend")
+    @patch("app.agents.factory.create_sandbox_backend")
+    def test_create_sandbox_backend_used_when_no_thread_id(
+        self,
+        mock_create: MagicMock,
+        mock_composite: MagicMock,
+        mock_store: MagicMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        """When no thread_id is available, create_sandbox_backend is called directly."""
+        mock_settings.sandbox_backend = "LOCAL_SHELL"
+        mock_sandbox = MagicMock()
+        mock_create.return_value = mock_sandbox
+
+        from app.agents.factory import _make_default_backend
+
+        factory = _make_default_backend()
+        # MagicMock config — isinstance check returns False → no thread_id path
+        mock_rt = MagicMock()
+        factory(mock_rt)
+
+        mock_create.assert_called_once()
+        call_kwargs = mock_composite.call_args.kwargs
+        assert call_kwargs["default"] is mock_sandbox
 
 
 # ---------------------------------------------------------------------------

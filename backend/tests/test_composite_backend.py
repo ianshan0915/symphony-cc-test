@@ -26,7 +26,7 @@ class TestMakeDefaultBackend:
         factory = _make_default_backend()
         assert callable(factory)
 
-    @patch("app.agents.sandbox.create_sandbox_backend", return_value=None)
+    @patch("app.agents.factory.create_sandbox_backend", return_value=None)
     @patch("app.agents.factory.StoreBackend")
     @patch("app.agents.factory.StateBackend")
     @patch("app.agents.factory.CompositeBackend")
@@ -58,7 +58,7 @@ class TestMakeDefaultBackend:
         assert "/memories/" in call_kwargs.kwargs["routes"]
         assert call_kwargs.kwargs["routes"]["/memories/"] == mock_store_backend.return_value
 
-    @patch("app.agents.sandbox.create_sandbox_backend")
+    @patch("app.agents.factory.create_sandbox_backend")
     @patch("app.agents.factory.StoreBackend")
     @patch("app.agents.factory.StateBackend")
     @patch("app.agents.factory.CompositeBackend")
@@ -85,7 +85,7 @@ class TestMakeDefaultBackend:
         # /memories/ route should still use StoreBackend
         assert "/memories/" in call_kwargs.kwargs["routes"]
 
-    @patch("app.agents.sandbox.create_sandbox_backend", return_value=None)
+    @patch("app.agents.factory.create_sandbox_backend", return_value=None)
     @patch("app.agents.factory.StoreBackend")
     @patch("app.agents.factory.StateBackend")
     @patch("app.agents.factory.CompositeBackend")

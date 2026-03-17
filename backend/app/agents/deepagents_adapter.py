@@ -82,10 +82,13 @@ def _parse_execute_result(content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(content)
         if isinstance(parsed, dict):
+            raw_exit = parsed.get("exit_code", parsed.get("returncode", 0))
             return {
                 "stdout": str(parsed.get("stdout", "")),
                 "stderr": str(parsed.get("stderr", "")),
-                "exit_code": int(parsed.get("exit_code", parsed.get("returncode", 0)) or 0),
+                # Preserve an explicit 0 exit code (falsy but valid).
+                # Only fall back to 0 when the key is absent (None).
+                "exit_code": int(raw_exit) if raw_exit is not None else 0,
             }
     except (json.JSONDecodeError, ValueError):
         pass

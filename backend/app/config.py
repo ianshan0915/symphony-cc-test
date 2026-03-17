@@ -1,5 +1,6 @@
 """Application configuration via environment variables."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -94,8 +95,10 @@ class Settings(BaseSettings):
     sandbox_backend: str = "LOCAL_SHELL"
 
     # Root directory used by LocalShellBackend.  All file-system operations and
-    # executed commands run relative to this directory.
-    sandbox_workspace_dir: str = "./workspace"
+    # executed commands run relative to this directory.  An absolute path is
+    # required so the directory resolves consistently regardless of the server's
+    # current working directory (which can vary across deployment environments).
+    sandbox_workspace_dir: str = "/tmp/sandbox_workspace"
 
     # Extra environment variables injected into sandbox processes.
     # Parsed from a JSON object: e.g. '{"PATH": "/usr/bin:/bin"}'
@@ -110,6 +113,17 @@ class Settings(BaseSettings):
 
     # Maximum byte length of stdout + stderr captured from a command.
     sandbox_max_output_bytes: int = 102_400  # 100 KiB
+
+    @field_validator("sandbox_backend")
+    @classmethod
+    def validate_sandbox_backend(cls, v: str) -> str:
+        """Reject unknown SANDBOX_BACKEND values at startup rather than at first use."""
+        _valid = {"NONE", "LOCAL_SHELL", "MODAL", "DAYTONA", "RUNLOOP"}
+        if v.upper().strip() not in _valid:
+            raise ValueError(
+                f"Invalid SANDBOX_BACKEND '{v}'. Valid values: {', '.join(sorted(_valid))}"
+            )
+        return v
 
     @property
     def database_url_psycopg(self) -> str:

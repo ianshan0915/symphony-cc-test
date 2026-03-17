@@ -38,7 +38,6 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -108,10 +107,21 @@ def create_sandbox_backend() -> Any | None:
 
         backend = LocalShellBackend(
             root_dir=settings.sandbox_workspace_dir,
-            # virtual_mode=True so that all file paths are interpreted
-            # relative to a virtual root — this is required for correct
-            # CompositeBackend path routing (e.g. /memories/ stays in
-            # StoreBackend rather than being written to disk).
+            # virtual_mode=True tells LocalShellBackend to expose a
+            # *virtual* root for the CompositeBackend routing protocol.
+            # This means deepagents treats this backend as a virtual-path
+            # provider, so path-prefix routing (e.g. /memories/ → StoreBackend)
+            # works correctly without the LocalShellBackend intercepting those
+            # paths and writing them to disk.
+            #
+            # Crucially, virtual_mode affects only the *file-operation* API
+            # (read_file, write_file, etc.) path routing within the backend
+            # protocol — it does NOT intercept or sandbox the underlying
+            # subprocess launched by the ``execute`` tool.  Shell commands
+            # always run as real processes with access to the host filesystem
+            # under ``root_dir``.  This is intentional for local development:
+            # code written via write_file and then executed can be read/run
+            # using real paths.
             virtual_mode=True,
             timeout=settings.sandbox_timeout,
             max_output_bytes=settings.sandbox_max_output_bytes,
@@ -154,10 +164,10 @@ class SandboxManager:
     when the session ends.
 
     For :class:`~deepagents.backends.LocalShellBackend` (local development),
-    :meth:`get_or_create` returns a new instance on every call because the
-    backend is stateless in virtual mode.  Production sandbox providers
-    should maintain a persistent instance per thread so the same container
-    is reused across multiple turns.
+    each session gets its own backend instance so concurrent threads don't
+    share mutable state.  Production sandbox providers should maintain a
+    persistent instance per thread so the same container is reused across
+    multiple turns.
 
     Usage::
 
@@ -171,11 +181,25 @@ class SandboxManager:
 
         # At application shutdown
         await manager.cleanup_all()
+
+    Thread safety
+    -------------
+    :meth:`get_or_create` is intentionally synchronous (called from the
+    deepagents backend factory which is sync).  The dict read-and-update is
+    safe on CPython because the GIL makes both operations atomic.  A missing
+    thread_id can cause two concurrent calls to both create a backend — the
+    second write wins and the first backend is abandoned.  For
+    :class:`~deepagents.backends.LocalShellBackend` this is harmless because
+    the backend is lightweight.  Cloud sandbox providers that require
+    explicit creation (e.g. container spin-up) should refactor to use an
+    async lock before wiring in.
     """
 
     def __init__(self) -> None:
         self._sandboxes: dict[str, Any] = {}
-        self._lock = asyncio.Lock()
+        # No asyncio.Lock here: get_or_create is sync (called from a sync
+        # backend factory).  CPython GIL protects the dict update.  See the
+        # class docstring "Thread safety" note above.
 
     def get_or_create(self, thread_id: str) -> Any | None:
         """Return the sandbox backend for a session, creating it if absent.

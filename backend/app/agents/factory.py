@@ -51,6 +51,7 @@ from app.agents.prompts import (
     get_prompt_for_agent_type,
     get_tools_for_agent_type,
 )
+from app.agents.sandbox import create_sandbox_backend, sandbox_manager
 from app.agents.skills import resolve_skill_paths
 from app.agents.subagents import build_subagent_configs
 from app.agents.tools import TOOL_REGISTRY
@@ -278,15 +279,40 @@ def _make_default_backend() -> Any:
     ``StoreBackend`` resolves the LangGraph store from the runtime at call
     time (via ``rt.store``), so no store reference is needed at factory
     construction time.
+
+    Sandbox lifecycle
+    -----------------
+    When a ``thread_id`` is available in the LangGraph runtime config (the
+    normal case for all agent invocations), the backend is obtained via
+    :data:`~app.agents.sandbox.sandbox_manager` so that:
+
+    * The same backend instance is reused for all turns in a session.
+    * :meth:`~app.agents.sandbox.SandboxManager.cleanup_all` called at
+      shutdown can terminate all active cloud sandboxes.
+
+    When no ``thread_id`` is present (e.g. unit tests or direct
+    ``_backend_factory`` calls without LangGraph config), the factory
+    falls back to :func:`~app.agents.sandbox.create_sandbox_backend` and
+    creates a fresh, untracked instance — acceptable because
+    ``LocalShellBackend`` in virtual mode is stateless.
     """
-    from app.agents.sandbox import create_sandbox_backend
 
     def _backend_factory(rt: Any) -> CompositeBackend:
-        # Use sandbox backend as the default when one is configured.
-        # LocalShellBackend is stateless in virtual_mode so creating a new
-        # instance per invocation is safe and avoids shared-state issues
-        # across concurrent threads.
-        sandbox = create_sandbox_backend()
+        # Extract thread_id from the LangGraph runtime config so the same
+        # sandbox backend is reused for all turns in a session and can be
+        # properly cleaned up at session end / shutdown.
+        config = getattr(rt, "config", None)
+        thread_id: str | None = None
+        if isinstance(config, dict):
+            thread_id = config.get("configurable", {}).get("thread_id")
+
+        if thread_id:
+            sandbox = sandbox_manager.get_or_create(thread_id)
+        else:
+            # No thread_id available (e.g. tests): create a fresh, untracked
+            # instance.  LocalShellBackend is stateless so this is safe.
+            sandbox = create_sandbox_backend()
+
         default: Any = sandbox if sandbox is not None else StateBackend(rt)
 
         return CompositeBackend(
