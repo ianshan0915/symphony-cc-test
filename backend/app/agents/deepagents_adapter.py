@@ -4,7 +4,7 @@ The adapter translates two LangGraph ``astream()`` stream modes into the SSE
 event vocabulary expected by the frontend (``ChatInterface.tsx``):
 
 * **messages** mode → ``token``, ``tool_call`` SSE events
-* **updates** mode → ``tool_result`` SSE events, plus interrupt detection
+* **updates** mode → ``tool_result``, ``todo_update`` SSE events, plus interrupt detection
 
 V2 streaming with ``subgraphs=True`` adds a namespace (``ns``) field to
 events, enabling detection of subagent execution.  Subagent events are
@@ -164,6 +164,78 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                         },
                     )
                 )
+
+    return events
+
+
+# ---------------------------------------------------------------------------
+# Todo update mapping
+# ---------------------------------------------------------------------------
+
+
+def map_todo_update(update: dict[str, Any]) -> list[SSEEvent]:
+    """Map a LangGraph *updates*-mode payload to ``todo_update`` SSE events.
+
+    Detects ``write_todos`` tool calls by inspecting state updates for a
+    ``todos`` key, which is populated whenever the agent calls the built-in
+    ``write_todos`` planning tool (provided by ``TodoListMiddleware``).
+
+    The ``write_todos`` tool stores its input directly in the graph state as
+    ``todos: list[Todo]``, where each ``Todo`` has ``content`` and ``status``
+    fields.  This function maps those to the frontend-facing format:
+
+    .. code-block:: json
+
+        {
+          "event": "todo_update",
+          "data": {
+            "todos": [
+              {"id": "1", "description": "Research API options", "status": "completed"},
+              {"id": "2", "description": "Write implementation", "status": "in_progress"},
+              {"id": "3", "description": "Add tests", "status": "pending"}
+            ]
+          }
+        }
+
+    Parameters
+    ----------
+    update:
+        A dict of ``{node_name: state_update}`` pairs yielded by
+        ``astream(stream_mode="updates")``.
+
+    Returns
+    -------
+    list[SSEEvent]
+        ``todo_update`` SSE events if a ``write_todos`` call is detected,
+        otherwise an empty list.
+    """
+    events: list[SSEEvent] = []
+
+    for node_name, node_output in update.items():
+        if node_name == "__interrupt__":
+            continue
+
+        if not isinstance(node_output, dict):
+            continue
+
+        todos_raw = node_output.get("todos")
+        if todos_raw is None or not isinstance(todos_raw, list):
+            continue
+
+        # Map Todo TypedDicts ({content, status}) → frontend format ({id, description, status}).
+        # Index-based IDs (1-based) are stable for a given write_todos call and sufficient
+        # for the frontend to render the list — the agent replaces the entire list each call.
+        todos = [
+            {
+                "id": str(i + 1),
+                "description": item.get("content", "") if isinstance(item, dict) else str(item),
+                "status": (
+                    item.get("status", "pending") if isinstance(item, dict) else "pending"
+                ),
+            }
+            for i, item in enumerate(todos_raw)
+        ]
+        events.append(SSEEvent(event="todo_update", data={"todos": todos}))
 
     return events
 

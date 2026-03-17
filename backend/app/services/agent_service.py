@@ -31,6 +31,7 @@ from app.agents.deepagents_adapter import (
     extract_subagent_namespace,
     map_message_chunk,
     map_state_update,
+    map_todo_update,
 )
 from app.agents.factory import UserContext, create_deep_agent
 from app.models.thread import Thread
@@ -312,7 +313,9 @@ class AgentService:
            approval (includes ``allowed_decisions``).
         5. ``approval_result`` — after the user approves/edits/rejects.
         6. ``tool_result`` — tool execution result.
-        7. ``message_end`` — signals the end of the assistant turn with the
+        7. ``todo_update`` — when the agent calls ``write_todos`` to update
+           its planning state; contains the full structured todo list.
+        8. ``message_end`` — signals the end of the assistant turn with the
            full message content.
 
         Note: a ``memory_updated`` SSE event is emitted by the HTTP layer
@@ -406,6 +409,8 @@ class AgentService:
                                     )
                                 else:
                                     yield sse_event
+                            for sse_event in map_todo_update(chunk):
+                                yield sse_event
 
                 # Emit sub_agent_end for any active subagents
                 for sa_name in active_subagents:

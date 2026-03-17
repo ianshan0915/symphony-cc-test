@@ -495,3 +495,140 @@ class TestSSEEventShared:
         from app.services.agent_service import SSEEvent as AgentSSE
 
         assert AgentSSE is SSEEvent
+
+
+# ---------------------------------------------------------------------------
+# Todo update streaming tests (SYM-87)
+# ---------------------------------------------------------------------------
+
+
+class TestTodoUpdateStreaming:
+    """Integration tests for write_todos → todo_update SSE event flow."""
+
+    @pytest.mark.asyncio
+    async def test_write_todos_emits_todo_update_event(self) -> None:
+        """When the agent calls write_todos, a todo_update SSE event is emitted."""
+        todos = [
+            {"content": "Research API options", "status": "completed"},
+            {"content": "Write implementation", "status": "in_progress"},
+            {"content": "Add tests", "status": "pending"},
+        ]
+        tool_msg = ToolMessage(
+            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
+        )
+        chunks: list[tuple[str, Any]] = [
+            ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
+            ("messages", (AIMessageChunk(content="Working on it"), {})),
+        ]
+        svc = AgentService(agent=_make_mock_agent(chunks))
+
+        events = await _collect_events(svc, thread_id="t1", user_message="do a complex task")
+        event_types = [e.event for e in events]
+
+        assert "todo_update" in event_types
+
+    @pytest.mark.asyncio
+    async def test_todo_update_event_structure(self) -> None:
+        """The todo_update event carries correctly structured todo items."""
+        todos = [
+            {"content": "Research API options", "status": "completed"},
+            {"content": "Write implementation", "status": "in_progress"},
+            {"content": "Add tests", "status": "pending"},
+        ]
+        tool_msg = ToolMessage(
+            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
+        )
+        chunks: list[tuple[str, Any]] = [
+            ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
+        ]
+        svc = AgentService(agent=_make_mock_agent(chunks))
+
+        events = await _collect_events(svc, thread_id="t1", user_message="plan my work")
+        todo_evt = next(e for e in events if e.event == "todo_update")
+
+        result_todos = todo_evt.data["todos"]
+        assert len(result_todos) == 3
+        assert result_todos[0] == {
+            "id": "1",
+            "description": "Research API options",
+            "status": "completed",
+        }
+        assert result_todos[1] == {
+            "id": "2",
+            "description": "Write implementation",
+            "status": "in_progress",
+        }
+        assert result_todos[2] == {
+            "id": "3",
+            "description": "Add tests",
+            "status": "pending",
+        }
+
+    @pytest.mark.asyncio
+    async def test_todo_status_transitions_emitted_as_separate_events(self) -> None:
+        """Multiple write_todos calls produce multiple todo_update events."""
+        initial_todos = [
+            {"content": "Step 1", "status": "in_progress"},
+            {"content": "Step 2", "status": "pending"},
+        ]
+        updated_todos = [
+            {"content": "Step 1", "status": "completed"},
+            {"content": "Step 2", "status": "in_progress"},
+        ]
+        tool_msg_1 = ToolMessage(
+            content=f"Updated todo list to {initial_todos}", tool_call_id="call_t1"
+        )
+        tool_msg_2 = ToolMessage(
+            content=f"Updated todo list to {updated_todos}", tool_call_id="call_t2"
+        )
+        chunks: list[tuple[str, Any]] = [
+            ("updates", {"tools": {"todos": initial_todos, "messages": [tool_msg_1]}}),
+            ("messages", (AIMessageChunk(content="Doing step 1..."), {})),
+            ("updates", {"tools": {"todos": updated_todos, "messages": [tool_msg_2]}}),
+        ]
+        svc = AgentService(agent=_make_mock_agent(chunks))
+
+        events = await _collect_events(svc, thread_id="t1", user_message="multi-step task")
+        todo_events = [e for e in events if e.event == "todo_update"]
+
+        assert len(todo_events) == 2
+        # First event: step 1 in_progress
+        first_statuses = {t["description"]: t["status"] for t in todo_events[0].data["todos"]}
+        assert first_statuses["Step 1"] == "in_progress"
+        assert first_statuses["Step 2"] == "pending"
+        # Second event: step 1 completed, step 2 in_progress
+        second_statuses = {t["description"]: t["status"] for t in todo_events[1].data["todos"]}
+        assert second_statuses["Step 1"] == "completed"
+        assert second_statuses["Step 2"] == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_regular_tool_calls_do_not_produce_todo_update(self) -> None:
+        """Non-write_todos tool results do not emit todo_update events."""
+        tool_msg = ToolMessage(content="Search result", tool_call_id="call_1")
+        chunks: list[tuple[str, Any]] = [
+            ("updates", {"tools": {"messages": [tool_msg]}}),
+        ]
+        svc = AgentService(agent=_make_mock_agent(chunks))
+
+        events = await _collect_events(svc, thread_id="t1", user_message="search for something")
+        event_types = [e.event for e in events]
+
+        assert "todo_update" not in event_types
+
+    @pytest.mark.asyncio
+    async def test_todo_update_and_tool_result_both_emitted(self) -> None:
+        """write_todos produces both a tool_result (for the ToolMessage) and a todo_update."""
+        todos = [{"content": "Do something", "status": "in_progress"}]
+        tool_msg = ToolMessage(
+            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
+        )
+        chunks: list[tuple[str, Any]] = [
+            ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
+        ]
+        svc = AgentService(agent=_make_mock_agent(chunks))
+
+        events = await _collect_events(svc, thread_id="t1", user_message="task")
+        event_types = [e.event for e in events]
+
+        assert "tool_result" in event_types
+        assert "todo_update" in event_types

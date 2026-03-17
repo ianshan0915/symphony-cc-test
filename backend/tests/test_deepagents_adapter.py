@@ -1,4 +1,4 @@
-"""Tests for the deepagents adapter event mapping (SYM-65)."""
+"""Tests for the deepagents adapter event mapping (SYM-65, SYM-87)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from app.agents.deepagents_adapter import (
     extract_interrupt,
     map_message_chunk,
     map_state_update,
+    map_todo_update,
 )
 
 # ---------------------------------------------------------------------------
@@ -182,3 +183,133 @@ class TestExtractInterrupt:
         update: dict[str, Any] = {"__interrupt__": [42]}
         result = extract_interrupt(update)
         assert result == {"data": 42}
+
+
+# ---------------------------------------------------------------------------
+# map_todo_update tests
+# ---------------------------------------------------------------------------
+
+
+class TestMapTodoUpdate:
+    """Tests for write_todos detection and todo_update SSE event mapping (SYM-87)."""
+
+    def test_todos_in_state_update_yields_todo_update_event(self) -> None:
+        """A state update containing a ``todos`` key emits a todo_update event."""
+        todos = [
+            {"content": "Research API options", "status": "completed"},
+            {"content": "Write implementation", "status": "in_progress"},
+            {"content": "Add tests", "status": "pending"},
+        ]
+        update: dict[str, Any] = {"tools": {"todos": todos, "messages": []}}
+        events = map_todo_update(update)
+        assert len(events) == 1
+        assert events[0].event == "todo_update"
+
+    def test_todo_update_event_contains_structured_list(self) -> None:
+        """The todo_update data contains a structured todos list with id, description, status."""
+        todos = [
+            {"content": "Research API options", "status": "completed"},
+            {"content": "Write implementation", "status": "in_progress"},
+            {"content": "Add tests", "status": "pending"},
+        ]
+        update: dict[str, Any] = {"tools": {"todos": todos, "messages": []}}
+        events = map_todo_update(update)
+        assert len(events) == 1
+        result_todos = events[0].data["todos"]
+        assert len(result_todos) == 3
+
+        assert result_todos[0] == {"id": "1", "description": "Research API options", "status": "completed"}
+        assert result_todos[1] == {"id": "2", "description": "Write implementation", "status": "in_progress"}
+        assert result_todos[2] == {"id": "3", "description": "Add tests", "status": "pending"}
+
+    def test_todo_ids_are_one_based_strings(self) -> None:
+        """IDs are assigned as 1-based string indices."""
+        todos = [
+            {"content": "Task A", "status": "pending"},
+            {"content": "Task B", "status": "pending"},
+        ]
+        update: dict[str, Any] = {"tools": {"todos": todos}}
+        events = map_todo_update(update)
+        ids = [t["id"] for t in events[0].data["todos"]]
+        assert ids == ["1", "2"]
+
+    def test_empty_todos_list_yields_todo_update_event(self) -> None:
+        """An empty todos list still emits a todo_update (clears the list)."""
+        update: dict[str, Any] = {"tools": {"todos": []}}
+        events = map_todo_update(update)
+        assert len(events) == 1
+        assert events[0].event == "todo_update"
+        assert events[0].data["todos"] == []
+
+    def test_status_transitions_are_surfaced(self) -> None:
+        """All three status values (pending, in_progress, completed) are preserved."""
+        todos = [
+            {"content": "Step 1", "status": "completed"},
+            {"content": "Step 2", "status": "in_progress"},
+            {"content": "Step 3", "status": "pending"},
+        ]
+        update: dict[str, Any] = {"tools": {"todos": todos}}
+        events = map_todo_update(update)
+        statuses = [t["status"] for t in events[0].data["todos"]]
+        assert statuses == ["completed", "in_progress", "pending"]
+
+    def test_update_without_todos_key_yields_no_events(self) -> None:
+        """State updates with no ``todos`` key produce no todo_update events."""
+        tool_msg = ToolMessage(content="Search result", tool_call_id="call_1")
+        update: dict[str, Any] = {"tools": {"messages": [tool_msg]}}
+        events = map_todo_update(update)
+        assert events == []
+
+    def test_interrupt_key_is_skipped(self) -> None:
+        """The __interrupt__ key is ignored by map_todo_update."""
+        update: dict[str, Any] = {
+            "__interrupt__": [{"tool_name": "web_search"}],
+        }
+        events = map_todo_update(update)
+        assert events == []
+
+    def test_non_dict_node_output_is_skipped(self) -> None:
+        """List-format node outputs (no dict to check for todos) produce no events."""
+        tool_msg = ToolMessage(content="OK", tool_call_id="call_2")
+        update: dict[str, Any] = {"tools": [tool_msg]}
+        events = map_todo_update(update)
+        assert events == []
+
+    def test_empty_update_yields_no_events(self) -> None:
+        """An entirely empty update dict produces no events."""
+        events = map_todo_update({})
+        assert events == []
+
+    def test_todo_content_mapped_to_description(self) -> None:
+        """The ``content`` field from the Todo TypedDict is exposed as ``description``."""
+        todos = [{"content": "Deploy to production", "status": "pending"}]
+        update: dict[str, Any] = {"tools": {"todos": todos}}
+        events = map_todo_update(update)
+        assert events[0].data["todos"][0]["description"] == "Deploy to production"
+        assert "content" not in events[0].data["todos"][0]
+
+    def test_missing_status_defaults_to_pending(self) -> None:
+        """Todos missing the status field default to ``pending``."""
+        todos = [{"content": "Task without status"}]
+        update: dict[str, Any] = {"tools": {"todos": todos}}
+        events = map_todo_update(update)
+        assert events[0].data["todos"][0]["status"] == "pending"
+
+    def test_write_todos_tool_message_in_same_update_also_produces_tool_result(self) -> None:
+        """When write_todos fires, map_state_update still emits tool_result for the ToolMessage."""
+        todos = [{"content": "Do something", "status": "in_progress"}]
+        tool_msg = ToolMessage(
+            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
+        )
+        update: dict[str, Any] = {"tools": {"todos": todos, "messages": [tool_msg]}}
+
+        # map_todo_update emits todo_update
+        todo_events = map_todo_update(update)
+        assert len(todo_events) == 1
+        assert todo_events[0].event == "todo_update"
+
+        # map_state_update still emits tool_result for the ToolMessage
+        state_events = map_state_update(update)
+        assert len(state_events) == 1
+        assert state_events[0].event == "tool_result"
+        assert state_events[0].data["run_id"] == "call_todos_1"
