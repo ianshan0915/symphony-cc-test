@@ -333,8 +333,7 @@ class TestLongConversationStreaming:
         """Simulating 30 message turns should complete without errors."""
         # Build a stream of 30 token chunks (simulating a long conversation output)
         chunks: list[tuple[str, Any]] = [
-            ("messages", (AIMessageChunk(content=f"Response {i}"), {}))
-            for i in range(30)
+            ("messages", (AIMessageChunk(content=f"Response {i}"), {})) for i in range(30)
         ]
 
         mock_agent = MagicMock()
