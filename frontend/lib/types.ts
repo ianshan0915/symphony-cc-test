@@ -132,6 +132,21 @@ export interface MemoryResponse {
   content: string;
 }
 
+/**
+ * A structured todo item from the agent's planning tool (write_todos).
+ * The agent emits `todo_update` SSE events with the current snapshot of todos.
+ */
+export interface TodoItem {
+  /** Stable identifier for this todo */
+  id: string;
+  /** Human-readable description of the task */
+  content: string;
+  /** Current execution status */
+  status: "pending" | "in_progress" | "completed";
+  /** Optional priority hint from the agent */
+  priority?: "low" | "medium" | "high";
+}
+
 /** A file operation tracked by the agent */
 export interface FileOperation {
   id: string;

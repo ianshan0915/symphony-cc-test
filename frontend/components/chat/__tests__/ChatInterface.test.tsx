@@ -230,6 +230,90 @@ function setupSubAgentFetchMock(sseEvents: string) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// todo_update SSE integration tests
+// ---------------------------------------------------------------------------
+
+describe("ChatInterface todo_update SSE events", () => {
+  it("renders Agent Plan section when todo_update event is received", async () => {
+    const todos = [
+      { id: "1", content: "Research the topic", status: "pending" },
+      { id: "2", content: "Write the report", status: "pending" },
+    ];
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      `event: todo_update\ndata: ${JSON.stringify({ todos })}\n\n` +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Plan my project{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Plan")).toBeInTheDocument();
+      expect(screen.getByText("Research the topic")).toBeInTheDocument();
+      expect(screen.getByText("Write the report")).toBeInTheDocument();
+    });
+  });
+
+  it("updates existing todos when a subsequent todo_update arrives", async () => {
+    const initialTodos = [
+      { id: "1", content: "Research the topic", status: "in_progress" },
+      { id: "2", content: "Write the report", status: "pending" },
+    ];
+    const updatedTodos = [
+      { id: "1", content: "Research the topic", status: "completed" },
+      { id: "2", content: "Write the report", status: "in_progress" },
+    ];
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      `event: todo_update\ndata: ${JSON.stringify({ todos: initialTodos })}\n\n` +
+      `event: todo_update\ndata: ${JSON.stringify({ todos: updatedTodos })}\n\n` +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Do the work{Enter}");
+
+    // After both events, progress should be 1/2 (1 completed)
+    await waitFor(() => {
+      expect(screen.getByText("1/2")).toBeInTheDocument();
+    });
+  });
+
+  it("shows todo priority badges when priorities are set", async () => {
+    const todos = [
+      { id: "1", content: "High priority task", status: "pending", priority: "high" },
+      { id: "2", content: "Low priority task", status: "pending", priority: "low" },
+    ];
+    setupSubAgentFetchMock(
+      'event: message_start\ndata: {"thread_id":"t1"}\n\n' +
+      `event: todo_update\ndata: ${JSON.stringify({ todos })}\n\n` +
+      'event: message_end\ndata: {"thread_id":"t1","content":"Done","tool_calls":null}\n\n',
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Prioritize tasks{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("High")).toBeInTheDocument();
+      expect(screen.getByText("Low")).toBeInTheDocument();
+    });
+  });
+});
+
 describe("ChatInterface sub-agent SSE events", () => {
   it("displays sub-agent panel when sub_agent_start event is received", async () => {
     setupSubAgentFetchMock(

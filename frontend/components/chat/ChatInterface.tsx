@@ -22,6 +22,7 @@ import type {
   FileOperation,
   SubAgent,
   ThreadDetail,
+  TodoItem,
 } from "@/lib/types";
 import type { AssistantConfig } from "./AssistantSelector";
 
@@ -68,6 +69,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sidebar state
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
+  const [todos, setTodos] = React.useState<TodoItem[]>([]);
   const [fileOps, setFileOps] = React.useState<FileOperation[]>([]);
 
   // Assistant selector state
@@ -141,6 +143,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       // Reset state for new thread
       setMessages([]);
       setTasks([]);
+      setTodos([]);
       setFileOps([]);
       setSubAgents([]);
       setPendingApproval(null);
@@ -154,6 +157,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     setCurrentThreadId(null);
     setMessages([]);
     setTasks([]);
+    setTodos([]);
     setFileOps([]);
     setSubAgents([]);
     subAgentProgressRef.current.clear();
@@ -254,6 +258,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setCurrentThreadId,
                     setPendingApproval,
                     setTasks,
+                    setTodos,
                     setFileOps,
                     setSubAgents,
                     subAgentProgressMap: subAgentProgressRef.current,
@@ -399,7 +404,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       />
 
       {/* Tasks sidebar */}
-      <TasksSidebar tasks={tasks} className="hidden lg:flex" />
+      <TasksSidebar tasks={tasks} todos={todos} className="hidden lg:flex" />
 
       {/* Main chat area */}
       <div className="flex flex-col h-full flex-1 max-w-3xl mx-auto">
@@ -507,6 +512,7 @@ interface SSEHandlers {
     React.SetStateAction<ApprovalRequest | null>
   >;
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
+  setTodos: React.Dispatch<React.SetStateAction<TodoItem[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
   setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
@@ -828,6 +834,32 @@ function processSSEEvent(
               : a
           )
         );
+      }
+      break;
+    }
+
+    case "todo_update": {
+      // Agent emits its current planning snapshot via the write_todos tool.
+      // The payload contains a `todos` array that replaces the current list.
+      const rawTodos = data.todos as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(rawTodos)) {
+        const parsedTodos: TodoItem[] = rawTodos.map((t, i) => {
+          const content = String(t.content ?? t.description ?? "");
+          if (process.env.NODE_ENV !== "production" && !content) {
+            console.warn("[todo_update] Todo item at index", i, "has no content:", t);
+          }
+          return {
+            id: String(t.id ?? `todo-${i}`),
+            content,
+            status: (["pending", "in_progress", "completed"].includes(t.status as string)
+              ? t.status
+              : "pending") as TodoItem["status"],
+            priority: (["low", "medium", "high"].includes(t.priority as string)
+              ? t.priority
+              : undefined) as TodoItem["priority"],
+          };
+        });
+        handlers.setTodos(parsedTodos);
       }
       break;
     }
