@@ -105,8 +105,13 @@ def map_message_chunk(
 def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
     """Map a LangGraph *updates*-mode payload to zero or more SSE events.
 
-    Primarily used to capture **tool results** from ``ToolMessage`` objects
-    present in node outputs.
+    Handles two event types:
+
+    * **Tool results** — ``ToolMessage`` objects present in node outputs.
+    * **Context summarization** — when ``SummarizationMiddleware`` compresses
+      the conversation history a ``_summarization_event`` key appears in the
+      node's state update.  We surface this as a ``context_summarized`` SSE
+      event so the frontend can display a "conversation was summarised" notice.
 
     Parameters
     ----------
@@ -117,7 +122,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
     Returns
     -------
     list[SSEEvent]
-        SSE events — typically ``tool_result`` events.
+        SSE events — typically ``tool_result`` and/or ``context_summarized``.
     """
     events: list[SSEEvent] = []
 
@@ -126,8 +131,35 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
             continue  # handled separately by extract_interrupt()
 
         messages: list[Any] = []
-        if isinstance(node_output, dict) and "messages" in node_output:
-            messages = node_output["messages"]
+        if isinstance(node_output, dict):
+            messages = node_output.get("messages", [])
+
+            # Detect a summarization event emitted by SummarizationMiddleware.
+            # The middleware stores the event under the private state key
+            # ``_summarization_event`` when it compresses the conversation
+            # history.  We emit a ``context_summarized`` SSE so the frontend
+            # can indicate that older context has been compressed.
+            summ_event: dict[str, Any] | None = node_output.get("_summarization_event")
+            if summ_event and isinstance(summ_event, dict):
+                file_path: str | None = summ_event.get("file_path")
+                cutoff_index: int | None = summ_event.get("cutoff_index")
+                events.append(
+                    SSEEvent(
+                        event="context_summarized",
+                        data={
+                            "node": node_name,
+                            "cutoff_index": cutoff_index,
+                            "history_file": file_path,
+                        },
+                    )
+                )
+                logger.info(
+                    "Context summarized at node=%s cutoff=%s history=%s",
+                    node_name,
+                    cutoff_index,
+                    file_path,
+                )
+
         elif isinstance(node_output, list):
             messages = node_output
 
