@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ShieldAlert, CheckCircle2, XCircle, Wrench } from "lucide-react";
+import { ShieldAlert, CheckCircle2, XCircle, Wrench, Pencil } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,8 @@ export interface ApprovalDialogProps {
   onApprove: (approvalId: string) => void;
   /** Called when user rejects the tool call */
   onReject: (approvalId: string, reason?: string) => void;
+  /** Called when user edits and approves the tool call with modified args */
+  onEdit: (approvalId: string, modifiedArgs: Record<string, unknown>) => void;
   /** Whether the approval action is in progress */
   isSubmitting?: boolean;
   /** Additional class names */
@@ -31,22 +33,29 @@ export interface ApprovalDialogProps {
  * ApprovalDialog — modal dialog shown when the agent encounters a tool call
  * that requires human approval before execution.
  *
- * Displays the tool name, arguments, and provides approve/reject buttons.
+ * Displays the tool name, arguments, and provides approve/edit/reject buttons.
  */
 export function ApprovalDialog({
   approval,
   onApprove,
   onReject,
+  onEdit,
   isSubmitting = false,
   className,
 }: ApprovalDialogProps) {
   const [rejectReason, setRejectReason] = React.useState("");
   const [showRejectInput, setShowRejectInput] = React.useState(false);
+  const [showEditInput, setShowEditInput] = React.useState(false);
+  const [editArgsText, setEditArgsText] = React.useState("");
+  const [editArgsError, setEditArgsError] = React.useState<string | null>(null);
 
   // Reset state when approval changes
   React.useEffect(() => {
     setRejectReason("");
     setShowRejectInput(false);
+    setShowEditInput(false);
+    setEditArgsText("");
+    setEditArgsError(null);
   }, [approval?.id]);
 
   if (!approval) return null;
@@ -60,6 +69,25 @@ export function ApprovalDialog({
       onReject(approval.id, rejectReason || undefined);
     } else {
       setShowRejectInput(true);
+      setShowEditInput(false);
+    }
+  };
+
+  const handleEditClick = () => {
+    if (showEditInput) {
+      // Attempt to parse and submit
+      try {
+        const parsed = JSON.parse(editArgsText) as Record<string, unknown>;
+        setEditArgsError(null);
+        onEdit(approval.id, parsed);
+      } catch {
+        setEditArgsError("Invalid JSON — please fix the syntax and try again.");
+      }
+    } else {
+      setEditArgsText(JSON.stringify(approval.toolArgs, null, 2));
+      setEditArgsError(null);
+      setShowEditInput(true);
+      setShowRejectInput(false);
     }
   };
 
@@ -91,8 +119,9 @@ export function ApprovalDialog({
             </div>
           </div>
 
-          {/* Arguments */}
-          {approval.toolArgs &&
+          {/* Arguments — read-only when not editing */}
+          {!showEditInput &&
+            approval.toolArgs &&
             Object.keys(approval.toolArgs).length > 0 && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
@@ -103,6 +132,32 @@ export function ApprovalDialog({
                 </pre>
               </div>
             )}
+
+          {/* Edit args textarea */}
+          {showEditInput && (
+            <div>
+              <label
+                htmlFor="edit-args"
+                className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5 block"
+              >
+                Edit Arguments (JSON)
+              </label>
+              <textarea
+                id="edit-args"
+                value={editArgsText}
+                onChange={(e) => {
+                  setEditArgsText(e.target.value);
+                  setEditArgsError(null);
+                }}
+                className="w-full rounded-lg border border-border bg-secondary p-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring max-h-[200px] overflow-y-auto"
+                rows={6}
+                aria-label="Edit tool arguments"
+              />
+              {editArgsError && (
+                <p className="text-xs text-destructive mt-1">{editArgsError}</p>
+              )}
+            </div>
+          )}
 
           {/* Reject reason input */}
           {showRejectInput && (
@@ -134,6 +189,15 @@ export function ApprovalDialog({
           >
             <XCircle className="h-4 w-4" />
             {showRejectInput ? "Confirm Reject" : "Reject"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleEditClick}
+            disabled={isSubmitting}
+            className="gap-1.5"
+          >
+            <Pencil className="h-4 w-4" />
+            {showEditInput ? "Confirm Edit" : "Edit"}
           </Button>
           <Button
             onClick={handleApprove}

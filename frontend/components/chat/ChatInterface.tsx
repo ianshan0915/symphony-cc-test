@@ -82,9 +82,6 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Memory modal state
   const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
-
-  // Memory modal state
-  const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
   // Badge shown on the memory button when the agent saves new memories.
   const [memoryUpdated, setMemoryUpdated] = React.useState(false);
 
@@ -395,6 +392,48 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     [pendingApproval]
   );
 
+  /**
+   * Handle edit-and-approve of a pending tool call with modified arguments.
+   */
+  const handleEdit = React.useCallback(
+    async (approvalId: string, modifiedArgs: Record<string, unknown>) => {
+      if (!pendingApproval) return;
+      setIsApprovalSubmitting(true);
+
+      try {
+        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thread_id: pendingApproval.threadId,
+            decision: "edit",
+            modified_args: modifiedArgs,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Edit approval failed: ${response.statusText}`);
+        }
+
+        // Update task status and args
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === approvalId
+              ? { ...t, status: "in_progress" as const, toolArgs: modifiedArgs }
+              : t
+          )
+        );
+
+        setPendingApproval(null);
+      } catch (error) {
+        console.error("Failed to submit edit:", error);
+      } finally {
+        setIsApprovalSubmitting(false);
+      }
+    },
+    [pendingApproval]
+  );
+
   return (
     <div
       className={cn("flex h-full w-full bg-background", className)}
@@ -492,6 +531,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         approval={pendingApproval}
         onApprove={handleApprove}
         onReject={handleReject}
+        onEdit={handleEdit}
         isSubmitting={isApprovalSubmitting}
       />
 

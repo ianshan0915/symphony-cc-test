@@ -44,10 +44,12 @@ export interface ApprovalDecision {
   approvalId: string;
   /** Thread ID */
   threadId: string;
-  /** Whether the user approved or rejected */
-  decision: "approve" | "reject";
+  /** Whether the user approved, rejected, or edited */
+  decision: "approve" | "reject" | "edit";
   /** Optional reason for rejection */
   reason?: string;
+  /** Modified tool arguments when decision is "edit" */
+  modifiedArgs?: Record<string, unknown>;
 }
 
 /** A task tracked by the agent */
