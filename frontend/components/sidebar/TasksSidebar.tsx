@@ -174,7 +174,7 @@ export function TasksSidebar({ tasks, todos = [], className }: TasksSidebarProps
                     Agent Plan
                   </p>
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="list" aria-live="polite" aria-label="Agent plan steps">
                   {todos.map((todo, index) => (
                     <TodoItemRow key={todo.id} todo={todo} index={index} />
                   ))}
@@ -231,7 +231,7 @@ function TodoItemRow({ todo, index }: { todo: TodoItem; index: number }) {
             config.color,
             isAnimated && "animate-spin"
           )}
-          aria-label={config.label}
+          aria-hidden="true"
         />
         <span className="sr-only">{config.label}</span>
       </div>

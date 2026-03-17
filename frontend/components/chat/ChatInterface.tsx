@@ -843,16 +843,22 @@ function processSSEEvent(
       // The payload contains a `todos` array that replaces the current list.
       const rawTodos = data.todos as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(rawTodos)) {
-        const parsedTodos: TodoItem[] = rawTodos.map((t) => ({
-          id: String(t.id ?? `todo-${Date.now()}-${Math.random()}`),
-          content: String(t.content ?? t.description ?? ""),
-          status: (["pending", "in_progress", "completed"].includes(t.status as string)
-            ? t.status
-            : "pending") as TodoItem["status"],
-          priority: (["low", "medium", "high"].includes(t.priority as string)
-            ? t.priority
-            : undefined) as TodoItem["priority"],
-        }));
+        const parsedTodos: TodoItem[] = rawTodos.map((t, i) => {
+          const content = String(t.content ?? t.description ?? "");
+          if (process.env.NODE_ENV !== "production" && !content) {
+            console.warn("[todo_update] Todo item at index", i, "has no content:", t);
+          }
+          return {
+            id: String(t.id ?? `todo-${i}`),
+            content,
+            status: (["pending", "in_progress", "completed"].includes(t.status as string)
+              ? t.status
+              : "pending") as TodoItem["status"],
+            priority: (["low", "medium", "high"].includes(t.priority as string)
+              ? t.priority
+              : undefined) as TodoItem["priority"],
+          };
+        });
         handlers.setTodos(parsedTodos);
       }
       break;
