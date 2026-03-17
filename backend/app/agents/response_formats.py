@@ -55,9 +55,7 @@ class ExtractedField(BaseModel):
 
     name: str = Field(..., description="Field name")
     value: Any = Field(..., description="Extracted value")
-    confidence: float = Field(
-        default=1.0, ge=0.0, le=1.0, description="Confidence score 0-1"
-    )
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score 0-1")
 
 
 class DataExtractionResponse(BaseModel):
@@ -117,15 +115,9 @@ class ReportResponse(BaseModel):
     """
 
     title: str = Field(..., description="Report title")
-    executive_summary: str = Field(
-        ..., description="High-level overview of findings"
-    )
-    sections: list[ReportSection] = Field(
-        default_factory=list, description="Report body sections"
-    )
-    conclusion: str = Field(
-        default="", description="Closing remarks and recommendations"
-    )
+    executive_summary: str = Field(..., description="High-level overview of findings")
+    sections: list[ReportSection] = Field(default_factory=list, description="Report body sections")
+    conclusion: str = Field(default="", description="Closing remarks and recommendations")
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Arbitrary metadata (date, author, version, etc.)",
@@ -143,9 +135,7 @@ class FormField(BaseModel):
     field_id: str = Field(..., description="Form field identifier")
     label: str = Field(..., description="Human-readable field label")
     value: Any = Field(default=None, description="Populated field value")
-    is_required: bool = Field(
-        default=False, description="Whether the field is mandatory"
-    )
+    is_required: bool = Field(default=False, description="Whether the field is mandatory")
     validation_error: str | None = Field(
         default=None,
         description="Validation error message if the value is invalid",
@@ -165,9 +155,7 @@ class FormFillResponse(BaseModel):
     """
 
     form_id: str = Field(default="", description="Identifier of the form being filled")
-    fields: list[FormField] = Field(
-        default_factory=list, description="Populated form fields"
-    )
+    fields: list[FormField] = Field(default_factory=list, description="Populated form fields")
     is_complete: bool = Field(
         default=False,
         description="True when all required fields are populated",
