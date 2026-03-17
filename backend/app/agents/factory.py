@@ -38,6 +38,7 @@ from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
+from pydantic import BaseModel
 from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
 from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -298,6 +299,7 @@ def create_deep_agent(
     subagents: list[dict[str, Any]] | None = None,
     enable_subagents: bool = True,
     interrupt_on: dict[str, Any] | list[str] | None = None,
+    response_format: type[BaseModel] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -359,6 +361,14 @@ def create_deep_agent(
         dicts (e.g. ``{"allowed_decisions": ["approve", "edit", "reject"]}``).
         When ``None`` (default) no interrupts are configured and the agent
         runs autonomously.
+    response_format:
+        Optional Pydantic model class for structured output.  When provided,
+        the agent constrains its final response to the given schema and
+        returns the validated instance in ``result["structured_response"]``
+        (via ``ainvoke()``) or in the ``structured_response`` key of the
+        final state update (via ``astream()``).  Use predefined formats from
+        :mod:`app.agents.response_formats` or supply a custom Pydantic class.
+        When ``None`` (default) the agent returns unstructured text as usual.
 
     Returns
     -------
@@ -488,7 +498,7 @@ def create_deep_agent(
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, subagents=%d, "
         "summarization_trigger=[fraction=%.0f%%, messages=%d], summarization_keep=%d msgs, "
-        "checkpointer=%s, store=%s, backend=%s",
+        "checkpointer=%s, store=%s, backend=%s, response_format=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
@@ -500,6 +510,7 @@ def create_deep_agent(
         type(saver).__name__,
         type(memory_store).__name__,
         "factory" if callable(agent_backend) else type(agent_backend).__name__,
+        response_format.__name__ if response_format is not None else None,
     )
 
     create_kwargs: dict[str, Any] = {
@@ -538,6 +549,10 @@ def create_deep_agent(
     # Pass interrupt_on when provided (human-in-the-loop tool approval)
     if interrupt_on is not None:
         create_kwargs["interrupt_on"] = interrupt_on
+
+    # Pass response_format when provided (structured output via Pydantic schema)
+    if response_format is not None:
+        create_kwargs["response_format"] = response_format
 
     agent = _deepagents_create(**create_kwargs)
 

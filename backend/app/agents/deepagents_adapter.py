@@ -320,6 +320,58 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
+# Structured response extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_structured_response(update: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the structured response payload from a LangGraph *updates*-mode chunk.
+
+    When an agent is created with ``response_format`` set, deepagents stores
+    the validated Pydantic instance (serialised as a dict) in the LangGraph
+    state under the ``structured_response`` key.  This function scans each
+    node's output for that key and returns the first non-``None`` value found.
+
+    Parameters
+    ----------
+    update:
+        A dict of ``{node_name: state_update}`` pairs yielded by
+        ``astream(stream_mode="updates")``.
+
+    Returns
+    -------
+    dict | None
+        The serialised structured response (as a plain dict) if present in
+        any node's output, otherwise ``None``.
+    """
+    for node_name, node_output in update.items():
+        if node_name == _INTERRUPT_KEY:
+            continue
+
+        if not isinstance(node_output, dict):
+            continue
+
+        structured = node_output.get("structured_response")
+        if structured is None:
+            continue
+
+        # deepagents may store a Pydantic model instance or an already-serialised dict.
+        if hasattr(structured, "model_dump"):
+            # Pydantic v2
+            return structured.model_dump()  # type: ignore[union-attr]
+        if hasattr(structured, "dict"):
+            # Pydantic v1 fallback
+            return structured.dict()  # type: ignore[union-attr]
+        if isinstance(structured, dict):
+            return structured
+
+        # Coerce any other type to a dict-compatible representation
+        return {"value": structured}
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Subagent namespace extraction
 # ---------------------------------------------------------------------------
 
