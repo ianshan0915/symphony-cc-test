@@ -122,6 +122,40 @@ class TestAgentFactory:
 
         assert callable(exported)
 
+    @patch("app.agents.factory._deepagents_create")
+    @patch("app.agents.factory._get_chat_model")
+    def test_create_agent_with_response_format(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        """response_format parameter should be forwarded to deepagents."""
+        from pydantic import BaseModel as PydanticBase
+
+        class MySchema(PydanticBase):
+            answer: str
+
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
+
+        agent = create_deep_agent(response_format=MySchema)
+        assert agent is not None
+
+        call_kwargs = mock_da_create.call_args.kwargs
+        assert call_kwargs.get("response_format") is MySchema
+
+    @patch("app.agents.factory._deepagents_create")
+    @patch("app.agents.factory._get_chat_model")
+    def test_create_agent_without_response_format_omits_key(
+        self, mock_model: MagicMock, mock_da_create: MagicMock
+    ) -> None:
+        """response_format should not appear in kwargs when not specified."""
+        mock_model.return_value = MagicMock()
+        mock_da_create.return_value = MagicMock()
+
+        create_deep_agent()
+
+        call_kwargs = mock_da_create.call_args.kwargs
+        assert "response_format" not in call_kwargs
+
 
 # ---------------------------------------------------------------------------
 # Message model tests (data layer supporting agent interactions)

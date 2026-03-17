@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.middleware import get_agents_md_modified_at
+from app.agents.response_formats import RESPONSE_FORMAT_REGISTRY
 from app.api.deps import (
     get_current_user,
     get_db_session,
@@ -53,6 +54,17 @@ class ChatRequest(BaseModel):
     assistant_type: str | None = Field(
         default=None,
         description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
+    )
+    response_format: str | None = Field(
+        default=None,
+        description=(
+            "Named response format for structured output.  One of: "
+            "'data_extraction', 'report', 'form_fill', 'api_integration'.  "
+            "When set the agent constrains its final response to the "
+            "corresponding JSON schema and the message_end SSE event will "
+            "include a 'structured_response' field.  Overrides any "
+            "response_format configured on the assistant."
+        ),
     )
 
 
@@ -174,15 +186,35 @@ async def chat_stream(
     """
     thread_svc = ThreadService(session)
 
-    # Resolve assistant_type from assistant_id or request body
+    # Resolve assistant_type and response_format from assistant_id or request body
     assistant_type = body.assistant_type
-    if assistant_id is not None and assistant_type is None:
+    # Start with the request-level response_format (takes precedence)
+    response_format_name: str | None = body.response_format
+    if assistant_id is not None and (assistant_type is None or response_format_name is None):
         assistant_svc = AssistantService(session)
         assistant = await assistant_svc.get(assistant_id, user_id=current_user.id)
         if assistant is not None:
-            assistant_type = (assistant.metadata_ or {}).get("agent_type")
+            meta = assistant.metadata_ or {}
+            if assistant_type is None:
+                assistant_type = meta.get("agent_type")
+            # Use assistant-configured response_format only when not overridden in request
+            if response_format_name is None:
+                response_format_name = meta.get("response_format")
         else:
             logger.warning("Assistant %s not found, falling back to default agent", assistant_id)
+
+    # Resolve the named format to a Pydantic class
+    from pydantic import BaseModel as _BaseModel
+
+    resolved_response_format: type[_BaseModel] | None = None
+    if response_format_name is not None:
+        resolved_response_format = RESPONSE_FORMAT_REGISTRY.get(response_format_name)
+        if resolved_response_format is None:
+            logger.warning(
+                "Unknown response_format %r — ignoring (valid choices: %s)",
+                response_format_name,
+                ", ".join(RESPONSE_FORMAT_REGISTRY),
+            )
 
     # Resolve or create thread
     thread: Thread | None = None
@@ -217,6 +249,7 @@ async def chat_stream(
             thread=thread,
             assistant_type=assistant_type,
             user_id=user_id_str,
+            response_format=resolved_response_format,
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":
