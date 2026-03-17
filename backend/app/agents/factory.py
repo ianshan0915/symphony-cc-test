@@ -38,12 +38,12 @@ from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
-from pydantic import BaseModel
 from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
 from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import BaseModel
 
 from app.agents.middleware import get_checkpointer, get_memory_store
 from app.agents.prompts import (

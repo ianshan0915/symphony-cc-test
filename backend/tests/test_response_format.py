@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessageChunk
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.agents.deepagents_adapter import extract_structured_response
 from app.agents.factory import create_deep_agent
@@ -32,7 +32,6 @@ from app.agents.response_formats import (
 )
 from app.services.agent_service import AgentService
 from app.services.sse import SSEEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared with test_streaming.py
@@ -90,9 +89,9 @@ class TestResponseFormatModels:
 
     def test_extracted_field_confidence_bounds(self) -> None:
         """ExtractedField confidence must be between 0 and 1."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ExtractedField(name="x", value=1, confidence=1.5)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ExtractedField(name="x", value=1, confidence=-0.1)
 
     def test_report_response_defaults(self) -> None:
@@ -349,7 +348,11 @@ class TestStreamResponseStructuredOutput:
     @pytest.mark.asyncio
     async def test_message_end_includes_structured_response(self) -> None:
         """When the agent returns structured_response it appears in message_end."""
-        structured_payload = {"fields": [], "source_summary": "test extract", "extraction_notes": None}
+        structured_payload = {
+            "fields": [],
+            "source_summary": "test extract",
+            "extraction_notes": None,
+        }
         chunks: list[tuple[str, Any]] = [
             ("messages", (AIMessageChunk(content="Extraction complete."), {})),
             (
@@ -381,7 +384,12 @@ class TestStreamResponseStructuredOutput:
     @pytest.mark.asyncio
     async def test_message_end_content_preserved_alongside_structured_response(self) -> None:
         """Full text content should still appear in message_end with structured_response."""
-        structured_payload = {"status": "success", "payload": {"answer": 42}, "errors": [], "metadata": {}}
+        structured_payload = {
+            "status": "success",
+            "payload": {"answer": 42},
+            "errors": [],
+            "metadata": {},
+        }
         chunks: list[tuple[str, Any]] = [
             ("messages", (AIMessageChunk(content="The answer is "), {})),
             ("messages", (AIMessageChunk(content="42."), {})),
