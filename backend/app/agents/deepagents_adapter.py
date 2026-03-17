@@ -19,13 +19,19 @@ This module is intentionally stateless — all state lives in
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from app.services.sse import SSEEvent
 
 logger = logging.getLogger(__name__)
+
+# LangGraph injects interrupt data under this reserved key in updates-mode payloads.
+_INTERRUPT_KEY = "__interrupt__"
+
+# Valid planning-tool status values surfaced via ``todo_update`` SSE events.
+TodoStatus = Literal["pending", "in_progress", "completed"]
 
 # Native filesystem tool names provided by deepagents when a backend is
 # configured.  Used to emit ``file_event`` SSE events alongside the
@@ -122,7 +128,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
     events: list[SSEEvent] = []
 
     for node_name, node_output in update.items():
-        if node_name == "__interrupt__":
+        if node_name == _INTERRUPT_KEY:
             continue  # handled separately by extract_interrupt()
 
         messages: list[Any] = []
@@ -212,14 +218,14 @@ def map_todo_update(update: dict[str, Any]) -> list[SSEEvent]:
     events: list[SSEEvent] = []
 
     for node_name, node_output in update.items():
-        if node_name == "__interrupt__":
+        if node_name == _INTERRUPT_KEY:
             continue
 
         if not isinstance(node_output, dict):
             continue
 
         todos_raw = node_output.get("todos")
-        if todos_raw is None or not isinstance(todos_raw, list):
+        if not isinstance(todos_raw, list):
             continue
 
         # Map Todo TypedDicts ({content, status}) → frontend format ({id, description, status}).
@@ -229,9 +235,7 @@ def map_todo_update(update: dict[str, Any]) -> list[SSEEvent]:
             {
                 "id": str(i + 1),
                 "description": item.get("content", "") if isinstance(item, dict) else str(item),
-                "status": (
-                    item.get("status", "pending") if isinstance(item, dict) else "pending"
-                ),
+                "status": item.get("status", "pending") if isinstance(item, dict) else "pending",
             }
             for i, item in enumerate(todos_raw)
         ]
@@ -262,7 +266,7 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
         The interrupt payload (tool_name, tool_args, allowed_decisions, etc.)
         or ``None`` if the update does not represent an interrupt.
     """
-    interrupts = update.get("__interrupt__")
+    interrupts = update.get(_INTERRUPT_KEY)
     if not interrupts:
         return None
 
@@ -320,7 +324,7 @@ def extract_subagent_namespace(ns: tuple[str, ...] | None) -> str | None:
     name = first.split(":")[0] if ":" in first else first
 
     # Skip internal LangGraph node names that aren't subagents
-    if name in ("tools", "__interrupt__", "agent"):
+    if name in ("tools", _INTERRUPT_KEY, "agent"):
         return None
 
     return name if name else None
