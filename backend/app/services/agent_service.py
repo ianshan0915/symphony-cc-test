@@ -25,9 +25,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from pydantic import BaseModel
 
 from app.agents.deepagents_adapter import (
     extract_interrupt,
+    extract_structured_response,
     extract_subagent_namespace,
     map_message_chunk,
     map_state_update,
@@ -104,6 +106,11 @@ class AgentService:
         self._agent = agent
         # Map of thread_id -> _PendingInterrupt for active interrupt requests
         self._pending_interrupts: dict[str, _PendingInterrupt] = {}
+        # Cache for structured-format agents keyed by (assistant_type, response_format_class).
+        # Avoids re-compiling the same agent graph on every structured-output request.
+        self._format_agent_cache: dict[
+            tuple[str | None, type[BaseModel] | None], CompiledStateGraph  # type: ignore[type-arg]
+        ] = {}
 
     @property
     def agent(self) -> CompiledStateGraph:  # type: ignore[type-arg]
@@ -112,16 +119,45 @@ class AgentService:
             self._agent = create_deep_agent(interrupt_on=INTERRUPT_ON)
         return self._agent
 
-    def get_agent(self, assistant_type: str | None = None) -> CompiledStateGraph:  # type: ignore[type-arg]
-        """Return an agent for the given assistant type.
+    def get_agent(
+        self,
+        assistant_type: str | None = None,
+        response_format: type[BaseModel] | None = None,
+    ) -> CompiledStateGraph:  # type: ignore[type-arg]
+        """Return an agent for the given assistant type and response format.
 
-        If *assistant_type* is ``None`` or ``"general"``, returns the default
-        singleton agent. Specialized types create a new agent with the
-        appropriate prompt and tool configuration.
+        If *assistant_type* is ``None`` or ``"general"`` **and** no
+        *response_format* is requested, returns the shared singleton agent.
+        Otherwise returns a cached agent for the ``(assistant_type,
+        response_format)`` combination, creating one on the first call and
+        reusing it on subsequent calls.
+
+        Parameters
+        ----------
+        assistant_type:
+            Agent specialization type.
+        response_format:
+            Optional Pydantic model class for structured output.  When
+            provided, the agent is looked up in a per-``(assistant_type,
+            response_format)`` cache so graph compilation happens only once
+            per unique combination.
         """
-        if not assistant_type or assistant_type == "general":
+        if (not assistant_type or assistant_type == "general") and response_format is None:
             return self.agent
-        return create_deep_agent(assistant_type=assistant_type, interrupt_on=INTERRUPT_ON)
+
+        # Use a per-(type, format) cache to avoid re-compiling graphs on every request.
+        cache_key = (assistant_type, response_format)
+        cached = self._format_agent_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        new_agent = create_deep_agent(
+            assistant_type=assistant_type,
+            interrupt_on=INTERRUPT_ON,
+            response_format=response_format,
+        )
+        self._format_agent_cache[cache_key] = new_agent
+        return new_agent
 
     def set_agent(self, agent: CompiledStateGraph) -> None:  # type: ignore[type-arg]
         """Replace the current agent graph (useful for testing)."""
@@ -280,6 +316,7 @@ class AgentService:
         thread: Thread | None = None,
         assistant_type: str | None = None,
         user_id: str | None = None,
+        response_format: type[BaseModel] | None = None,
     ) -> AsyncIterator[SSEEvent]:
         """Stream agent response as SSE events.
 
@@ -304,6 +341,13 @@ class AgentService:
             ``StoreBackend`` resolves memory reads/writes to the user's own
             namespace ``("filesystem", user_id)`` — matching exactly the
             namespace written by ``PUT /memory``.
+        response_format:
+            Optional Pydantic model class for structured output.  When
+            provided, the agent constrains its response to the given schema
+            and the ``message_end`` SSE event will include a
+            ``structured_response`` field containing the serialised Pydantic
+            instance.  When ``None`` (default) the agent returns unstructured
+            text as usual.
 
         Yields events in order:
         1. ``message_start`` — signals the beginning of an assistant turn.
@@ -316,7 +360,8 @@ class AgentService:
         7. ``todo_update`` — when the agent calls ``write_todos`` to update
            its planning state; contains the full structured todo list.
         8. ``message_end`` — signals the end of the assistant turn with the
-           full message content.
+           full message content.  Includes ``structured_response`` when a
+           ``response_format`` was configured.
 
         Note: a ``memory_updated`` SSE event is emitted by the HTTP layer
         (``chat.py``) *after* ``message_end`` when the agent has written new
@@ -332,8 +377,8 @@ class AgentService:
         # user-scoped namespace ("filesystem", user_id) for AGENTS.md reads.
         agent_context: UserContext | None = UserContext(user_id=user_id) if user_id else None
 
-        # Select the appropriate agent for the assistant type
-        active_agent = self.get_agent(assistant_type)
+        # Select the appropriate agent for the assistant type and response format
+        active_agent = self.get_agent(assistant_type, response_format=response_format)
 
         # Emit message_start
         yield SSEEvent(
@@ -343,6 +388,7 @@ class AgentService:
 
         full_content = ""
         tool_calls_data: list[dict[str, Any]] = []
+        structured_response: dict[str, Any] | None = None
         # Track active subagent namespaces to emit start/end events
         active_subagents: set[str] = set()
 
@@ -396,6 +442,10 @@ class AgentService:
                         # Check for interrupt (human-in-the-loop)
                         if isinstance(chunk, dict):
                             interrupt_data = extract_interrupt(chunk)
+                            # Capture structured_response if present (response_format mode)
+                            sr = extract_structured_response(chunk)
+                            if sr is not None:
+                                structured_response = sr
                             for sse_event in map_state_update(chunk):
                                 if subagent_name:
                                     yield SSEEvent(
@@ -500,15 +550,15 @@ class AgentService:
             )
             return
 
-        # Emit message_end with full content
-        yield SSEEvent(
-            event="message_end",
-            data={
-                "thread_id": thread_id,
-                "content": full_content,
-                "tool_calls": tool_calls_data if tool_calls_data else None,
-            },
-        )
+        # Emit message_end with full content and optional structured response
+        message_end_data: dict[str, Any] = {
+            "thread_id": thread_id,
+            "content": full_content,
+            "tool_calls": tool_calls_data if tool_calls_data else None,
+        }
+        if structured_response is not None:
+            message_end_data["structured_response"] = structured_response
+        yield SSEEvent(event="message_end", data=message_end_data)
 
 
 def _allowed_decisions_for_tool(tool_name: str) -> list[str]:
