@@ -218,8 +218,16 @@ class TestMapTodoUpdate:
         result_todos = events[0].data["todos"]
         assert len(result_todos) == 3
 
-        assert result_todos[0] == {"id": "1", "description": "Research API options", "status": "completed"}
-        assert result_todos[1] == {"id": "2", "description": "Write implementation", "status": "in_progress"}
+        assert result_todos[0] == {
+            "id": "1",
+            "description": "Research API options",
+            "status": "completed",
+        }
+        assert result_todos[1] == {
+            "id": "2",
+            "description": "Write implementation",
+            "status": "in_progress",
+        }
         assert result_todos[2] == {"id": "3", "description": "Add tests", "status": "pending"}
 
     def test_todo_ids_are_one_based_strings(self) -> None:
@@ -298,9 +306,7 @@ class TestMapTodoUpdate:
     def test_write_todos_tool_message_in_same_update_also_produces_tool_result(self) -> None:
         """When write_todos fires, map_state_update still emits tool_result for the ToolMessage."""
         todos = [{"content": "Do something", "status": "in_progress"}]
-        tool_msg = ToolMessage(
-            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
-        )
+        tool_msg = ToolMessage(content=f"Updated todo list to {todos}", tool_call_id="call_todos_1")
         update: dict[str, Any] = {"tools": {"todos": todos, "messages": [tool_msg]}}
 
         # map_todo_update emits todo_update

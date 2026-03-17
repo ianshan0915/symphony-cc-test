@@ -513,9 +513,7 @@ class TestTodoUpdateStreaming:
             {"content": "Write implementation", "status": "in_progress"},
             {"content": "Add tests", "status": "pending"},
         ]
-        tool_msg = ToolMessage(
-            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
-        )
+        tool_msg = ToolMessage(content=f"Updated todo list to {todos}", tool_call_id="call_todos_1")
         chunks: list[tuple[str, Any]] = [
             ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
             ("messages", (AIMessageChunk(content="Working on it"), {})),
@@ -535,9 +533,7 @@ class TestTodoUpdateStreaming:
             {"content": "Write implementation", "status": "in_progress"},
             {"content": "Add tests", "status": "pending"},
         ]
-        tool_msg = ToolMessage(
-            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
-        )
+        tool_msg = ToolMessage(content=f"Updated todo list to {todos}", tool_call_id="call_todos_1")
         chunks: list[tuple[str, Any]] = [
             ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
         ]
@@ -619,9 +615,7 @@ class TestTodoUpdateStreaming:
     async def test_todo_update_and_tool_result_both_emitted(self) -> None:
         """write_todos produces both a tool_result (for the ToolMessage) and a todo_update."""
         todos = [{"content": "Do something", "status": "in_progress"}]
-        tool_msg = ToolMessage(
-            content=f"Updated todo list to {todos}", tool_call_id="call_todos_1"
-        )
+        tool_msg = ToolMessage(content=f"Updated todo list to {todos}", tool_call_id="call_todos_1")
         chunks: list[tuple[str, Any]] = [
             ("updates", {"tools": {"todos": todos, "messages": [tool_msg]}}),
         ]
