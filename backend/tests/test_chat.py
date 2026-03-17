@@ -351,6 +351,7 @@ class TestChatStreamEndpoint:
         original_stream = agent_service.stream_response
         agent_service.stream_response = mock_stream  # type: ignore[assignment]
         try:
+
             async def fake_modified_at_none(user_id: str | None = None) -> None:
                 return None
 
