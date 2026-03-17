@@ -18,6 +18,7 @@ This module is intentionally stateless — all state lives in
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any, Literal
 
@@ -47,6 +48,72 @@ _FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
         "execute",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Execute result parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_execute_result(content: str) -> dict[str, Any]:
+    """Parse the output of the ``execute`` tool into structured fields.
+
+    deepagents' LocalShellBackend returns execute results as either a JSON
+    object or a plain-text representation.  This function normalises both
+    formats into a dict with ``stdout``, ``stderr``, and ``exit_code`` keys.
+
+    Falls back gracefully: if parsing fails the raw content is returned as
+    ``stdout`` with an empty ``stderr`` and ``exit_code`` of ``-1``.
+
+    Parameters
+    ----------
+    content:
+        The string content of the ``ToolMessage`` for an ``execute`` call.
+
+    Returns
+    -------
+    dict[str, Any]
+        ``{"stdout": str, "stderr": str, "exit_code": int}``
+    """
+    import json
+    import re
+
+    # Try JSON first — deepagents may return a JSON-serialised dict.
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            return {
+                "stdout": str(parsed.get("stdout", "")),
+                "stderr": str(parsed.get("stderr", "")),
+                "exit_code": int(parsed.get("exit_code", parsed.get("returncode", 0)) or 0),
+            }
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Try plain-text format: "Exit code: N\nstdout:\n...\nstderr:\n..."
+    # or variations thereof produced by different backends.
+    exit_code = 0
+    exit_match = re.search(r"(?i)exit\s*code[:\s]+(-?\d+)", content)
+    if exit_match:
+        with contextlib.suppress(ValueError):
+            exit_code = int(exit_match.group(1))
+
+    stdout = ""
+    stderr = ""
+
+    stdout_match = re.search(r"(?i)stdout[:\s]*(.*?)(?=stderr[:\s]|$)", content, re.DOTALL)
+    if stdout_match:
+        stdout = stdout_match.group(1).strip()
+
+    stderr_match = re.search(r"(?i)stderr[:\s]*(.*?)$", content, re.DOTALL)
+    if stderr_match:
+        stderr = stderr_match.group(1).strip()
+
+    # If no structured markers were found, treat the whole content as stdout.
+    if not stdout and not stderr:
+        stdout = content.strip()
+
+    return {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +252,23 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                                 "run_id": run_id,
                                 "tool_name": tool_name,
                                 "output": content,
+                            },
+                        )
+                    )
+
+                # For the execute tool, emit a structured execute_result event
+                # with parsed stdout, stderr, and exit_code so the frontend can
+                # display code-execution output with proper formatting.
+                if tool_name == "execute":
+                    parsed = _parse_execute_result(content)
+                    events.append(
+                        SSEEvent(
+                            event="execute_result",
+                            data={
+                                "run_id": run_id,
+                                "stdout": parsed["stdout"],
+                                "stderr": parsed["stderr"],
+                                "exit_code": parsed["exit_code"],
                             },
                         )
                     )
