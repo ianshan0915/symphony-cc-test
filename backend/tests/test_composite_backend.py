@@ -26,24 +26,22 @@ class TestMakeDefaultBackend:
         factory = _make_default_backend()
         assert callable(factory)
 
-    @patch("app.agents.sandbox.create_sandbox_backend", return_value=None)
     @patch("app.agents.factory.StoreBackend")
     @patch("app.agents.factory.StateBackend")
     @patch("app.agents.factory.CompositeBackend")
-    def test_factory_creates_composite_backend_no_sandbox(
+    def test_factory_creates_composite_backend(
         self,
         mock_composite: MagicMock,
         mock_state: MagicMock,
         mock_store_backend: MagicMock,
-        mock_create_sandbox: MagicMock,
     ) -> None:
-        """When sandbox is disabled, the factory creates CompositeBackend with StateBackend."""
+        """The factory should create a CompositeBackend with correct routing."""
         factory = _make_default_backend()
 
         mock_rt = MagicMock()
         factory(mock_rt)
 
-        # StateBackend should be created with the runtime when sandbox is disabled
+        # StateBackend should be created with the runtime
         mock_state.assert_called_once_with(mock_rt)
 
         # StoreBackend should be created with the runtime and namespace factory
@@ -58,34 +56,6 @@ class TestMakeDefaultBackend:
         assert "/memories/" in call_kwargs.kwargs["routes"]
         assert call_kwargs.kwargs["routes"]["/memories/"] == mock_store_backend.return_value
 
-    @patch("app.agents.sandbox.create_sandbox_backend")
-    @patch("app.agents.factory.StoreBackend")
-    @patch("app.agents.factory.StateBackend")
-    @patch("app.agents.factory.CompositeBackend")
-    def test_factory_creates_composite_backend_with_sandbox(
-        self,
-        mock_composite: MagicMock,
-        mock_state: MagicMock,
-        mock_store_backend: MagicMock,
-        mock_create_sandbox: MagicMock,
-    ) -> None:
-        """When sandbox is configured, it should replace StateBackend as the default."""
-        mock_sandbox = MagicMock(name="LocalShellBackend")
-        mock_create_sandbox.return_value = mock_sandbox
-
-        factory = _make_default_backend()
-        mock_rt = MagicMock()
-        factory(mock_rt)
-
-        # CompositeBackend should use the sandbox as its default backend
-        call_kwargs = mock_composite.call_args
-        assert call_kwargs.kwargs["default"] is mock_sandbox
-        # StateBackend should NOT be called when sandbox is available
-        mock_state.assert_not_called()
-        # /memories/ route should still use StoreBackend
-        assert "/memories/" in call_kwargs.kwargs["routes"]
-
-    @patch("app.agents.sandbox.create_sandbox_backend", return_value=None)
     @patch("app.agents.factory.StoreBackend")
     @patch("app.agents.factory.StateBackend")
     @patch("app.agents.factory.CompositeBackend")
@@ -94,7 +64,6 @@ class TestMakeDefaultBackend:
         mock_composite: MagicMock,
         mock_state: MagicMock,
         mock_store_backend: MagicMock,
-        mock_create_sandbox: MagicMock,
     ) -> None:
         """The factory callable should return the CompositeBackend instance."""
         factory = _make_default_backend()

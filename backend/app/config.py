@@ -84,33 +84,6 @@ class Settings(BaseSettings):
     summarization_keep_messages: int = 20
     summarization_summary_prompt: str = ""
 
-    # --- Sandbox Backend (code execution) ---
-    # Controls which sandbox backend provides the ``execute`` tool for running
-    # shell commands in isolated environments.
-    #
-    # LOCAL_SHELL — LocalShellBackend for local development (no true isolation).
-    # MODAL / DAYTONA / RUNLOOP — Cloud sandbox providers for production.
-    # NONE — Disable code execution; agents cannot run shell commands.
-    sandbox_backend: str = "LOCAL_SHELL"
-
-    # Root directory used by LocalShellBackend.  All file-system operations and
-    # executed commands run relative to this directory.
-    sandbox_workspace_dir: str = "./workspace"
-
-    # Extra environment variables injected into sandbox processes.
-    # Parsed from a JSON object: e.g. '{"PATH": "/usr/bin:/bin"}'
-    sandbox_env: dict[str, str] = {}
-
-    # Whether the sandbox inherits the parent process environment.
-    # Enable with caution in production — it may expose host secrets.
-    sandbox_inherit_env: bool = False
-
-    # Default timeout (seconds) for sandbox command execution.
-    sandbox_timeout: int = 120
-
-    # Maximum byte length of stdout + stderr captured from a command.
-    sandbox_max_output_bytes: int = 102_400  # 100 KiB
-
     @property
     def database_url_psycopg(self) -> str:
         """Return a psycopg-compatible connection string.
