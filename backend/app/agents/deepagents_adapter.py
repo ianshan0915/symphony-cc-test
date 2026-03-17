@@ -343,6 +343,24 @@ def extract_structured_response(update: dict[str, Any]) -> dict[str, Any] | None
     dict | None
         The serialised structured response (as a plain dict) if present in
         any node's output, otherwise ``None``.
+
+    Notes
+    -----
+    **First-non-None semantics within a single chunk**
+
+    Within one updates-mode chunk, this function returns the first non-``None``
+    ``structured_response`` found across nodes.  In the deepagents framework
+    only the terminal agent node writes ``structured_response``, so multiple
+    competing values within the same chunk do not occur in practice.
+
+    **Last-chunk wins across the full stream**
+
+    In :meth:`~app.services.agent_service.AgentService.stream_response` the
+    caller accumulates ``structured_response`` across *all* chunks, replacing
+    the accumulated value each time a non-``None`` result is found.  This means
+    the *last* chunk containing a ``structured_response`` wins — which is the
+    intended behaviour: if deepagents emits intermediate partial payloads the
+    final validated response always takes precedence.
     """
     for node_name, node_output in update.items():
         if node_name == _INTERRUPT_KEY:

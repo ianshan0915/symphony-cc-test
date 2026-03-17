@@ -4,14 +4,16 @@ Covers:
 - Predefined response format models and registry
 - factory.py response_format parameter pass-through
 - deepagents_adapter structured response extraction
-- AgentService: get_agent() with response_format
+- AgentService: get_agent() with response_format (including agent cache)
 - AgentService: stream_response() captures structured_response and includes
   it in the message_end SSE event
-- chat.py request schema accepts response_format
+- chat.py request schema accepts response_format (Literal validation)
+- HTTP-layer: assistant metadata fallback and precedence
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -469,3 +471,278 @@ class TestSSEEventStructuredResponse:
         assert "event: message_end" in encoded
         assert "structured_response" in encoded
         assert encoded.endswith("\n\n")
+
+
+# ---------------------------------------------------------------------------
+# APIIntegrationResponse.status Literal constraint
+# ---------------------------------------------------------------------------
+
+
+class TestAPIIntegrationResponseStatus:
+    """Tests that APIIntegrationResponse.status enforces Literal constraint."""
+
+    def test_valid_status_success(self) -> None:
+        resp = APIIntegrationResponse(status="success")
+        assert resp.status == "success"
+
+    def test_valid_status_partial(self) -> None:
+        resp = APIIntegrationResponse(status="partial")
+        assert resp.status == "partial"
+
+    def test_valid_status_error(self) -> None:
+        resp = APIIntegrationResponse(status="error")
+        assert resp.status == "error"
+
+    def test_invalid_status_raises_validation_error(self) -> None:
+        """Arbitrary strings must be rejected by Pydantic validation."""
+        with pytest.raises(ValidationError):
+            APIIntegrationResponse(status="unknown_status")  # type: ignore[arg-type]
+
+    def test_invalid_status_typo(self) -> None:
+        with pytest.raises(ValidationError):
+            APIIntegrationResponse(status="succes")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# AgentService agent cache
+# ---------------------------------------------------------------------------
+
+
+class TestAgentServiceCache:
+    """Tests for per-(assistant_type, response_format) agent caching in get_agent()."""
+
+    @patch("app.services.agent_service.create_deep_agent")
+    def test_same_format_reuses_cached_agent(self, mock_create: MagicMock) -> None:
+        """Calling get_agent() twice with the same format returns the same instance."""
+        cached_agent = MagicMock()
+        mock_create.return_value = cached_agent
+
+        svc = AgentService(agent=MagicMock())
+        result1 = svc.get_agent(response_format=DataExtractionResponse)
+        result2 = svc.get_agent(response_format=DataExtractionResponse)
+
+        assert result1 is result2
+        # create_deep_agent should only be called once
+        mock_create.assert_called_once()
+
+    @patch("app.services.agent_service.create_deep_agent")
+    def test_different_formats_create_separate_agents(self, mock_create: MagicMock) -> None:
+        """Different response_format classes produce separate cached entries."""
+        agent_a = MagicMock()
+        agent_b = MagicMock()
+        mock_create.side_effect = [agent_a, agent_b]
+
+        svc = AgentService(agent=MagicMock())
+        result_a = svc.get_agent(response_format=DataExtractionResponse)
+        result_b = svc.get_agent(response_format=ReportResponse)
+
+        assert result_a is agent_a
+        assert result_b is agent_b
+        assert mock_create.call_count == 2
+
+    @patch("app.services.agent_service.create_deep_agent")
+    def test_type_and_format_combination_cached(self, mock_create: MagicMock) -> None:
+        """(assistant_type, response_format) combinations are cached independently."""
+        agent_1 = MagicMock()
+        agent_2 = MagicMock()
+        mock_create.side_effect = [agent_1, agent_2]
+
+        svc = AgentService(agent=MagicMock())
+        r1 = svc.get_agent(assistant_type="researcher", response_format=ReportResponse)
+        r2 = svc.get_agent(assistant_type="coder", response_format=ReportResponse)
+
+        assert r1 is agent_1
+        assert r2 is agent_2
+        assert mock_create.call_count == 2
+
+    @patch("app.services.agent_service.create_deep_agent")
+    def test_same_type_and_format_reuses_cache(self, mock_create: MagicMock) -> None:
+        """The same (assistant_type, response_format) pair is served from cache."""
+        shared_agent = MagicMock()
+        mock_create.return_value = shared_agent
+
+        svc = AgentService(agent=MagicMock())
+        r1 = svc.get_agent(assistant_type="researcher", response_format=ReportResponse)
+        r2 = svc.get_agent(assistant_type="researcher", response_format=ReportResponse)
+
+        assert r1 is r2
+        mock_create.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# ChatRequest Literal validation for response_format
+# ---------------------------------------------------------------------------
+
+
+class TestChatRequestResponseFormatValidation:
+    """Tests that ChatRequest.response_format enforces Literal values."""
+
+    def test_valid_format_names_accepted(self) -> None:
+        """All registry keys should be accepted by ChatRequest."""
+        from app.api.routes.chat import ChatRequest
+
+        for name in ["data_extraction", "report", "form_fill", "api_integration"]:
+            req = ChatRequest(message="hello", response_format=name)  # type: ignore[arg-type]
+            assert req.response_format == name
+
+    def test_none_format_accepted(self) -> None:
+        from app.api.routes.chat import ChatRequest
+
+        req = ChatRequest(message="hello", response_format=None)
+        assert req.response_format is None
+
+    def test_invalid_format_name_raises_validation_error(self) -> None:
+        """Unknown format names must be rejected at deserialization."""
+        from app.api.routes.chat import ChatRequest
+
+        with pytest.raises(ValidationError):
+            ChatRequest(message="hello", response_format="nonexistent_format")  # type: ignore[arg-type]
+
+    def test_typo_in_format_name_raises_validation_error(self) -> None:
+        from app.api.routes.chat import ChatRequest
+
+        with pytest.raises(ValidationError):
+            ChatRequest(message="hello", response_format="data_extration")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# HTTP-layer: assistant metadata response_format resolution
+# ---------------------------------------------------------------------------
+
+
+class TestChatStreamResponseFormatHTTP:
+    """Integration-level tests for response_format in the chat_stream HTTP endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_response_format_returns_422(self, client) -> None:
+        """An unknown response_format name in the request body must return 422."""
+        resp = await client.post(
+            "/chat/stream",
+            json={"message": "hello", "response_format": "not_a_real_format"},
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_valid_response_format_forwarded_to_stream(self, client, db_session) -> None:
+        """A valid response_format name is forwarded to stream_response()."""
+        from app.services.agent_service import agent_service
+
+        captured: dict = {}
+
+        async def mock_stream(**kwargs: Any) -> AsyncIterator[SSEEvent]:
+            captured.update(kwargs)
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "done",
+                    "tool_calls": None,
+                },
+            )
+
+        original = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            resp = await client.post(
+                "/chat/stream",
+                json={"message": "extract data", "response_format": "data_extraction"},
+            )
+            assert resp.status_code == 200
+            assert captured.get("response_format") is DataExtractionResponse
+        finally:
+            agent_service.stream_response = original  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_assistant_metadata_response_format_used_when_request_omits_it(
+        self, client, db_session
+    ) -> None:
+        """When the request omits response_format, assistant metadata is used."""
+        from app.models.assistant import AssistantCreate
+        from app.services.agent_service import agent_service
+        from app.services.assistant_service import AssistantService
+
+        assistant_svc = AssistantService(db_session)
+        assistant = await assistant_svc.create(
+            AssistantCreate(
+                name="report-assistant",
+                description="Generates reports",
+                model="gpt-4o",
+                tools_enabled=[],
+                metadata={"response_format": "report"},
+            )
+        )
+
+        captured: dict = {}
+
+        async def mock_stream(**kwargs: Any) -> AsyncIterator[SSEEvent]:
+            captured.update(kwargs)
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "report done",
+                    "tool_calls": None,
+                },
+            )
+
+        original = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            resp = await client.post(
+                f"/chat/stream?assistant_id={assistant.id}",
+                json={"message": "generate a report"},
+            )
+            assert resp.status_code == 200
+            assert captured.get("response_format") is ReportResponse
+        finally:
+            agent_service.stream_response = original  # type: ignore[assignment]
+
+    @pytest.mark.asyncio
+    async def test_request_response_format_overrides_assistant_metadata(
+        self, client, db_session
+    ) -> None:
+        """A request-level response_format overrides the assistant's metadata value."""
+        from app.models.assistant import AssistantCreate
+        from app.services.agent_service import agent_service
+        from app.services.assistant_service import AssistantService
+
+        assistant_svc = AssistantService(db_session)
+        assistant = await assistant_svc.create(
+            AssistantCreate(
+                name="form-assistant",
+                description="Fills forms",
+                model="gpt-4o",
+                tools_enabled=[],
+                metadata={"response_format": "form_fill"},
+            )
+        )
+
+        captured: dict = {}
+
+        async def mock_stream(**kwargs: Any) -> AsyncIterator[SSEEvent]:
+            captured.update(kwargs)
+            yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
+            yield SSEEvent(
+                event="message_end",
+                data={
+                    "thread_id": kwargs["thread_id"],
+                    "content": "done",
+                    "tool_calls": None,
+                },
+            )
+
+        original = agent_service.stream_response
+        agent_service.stream_response = mock_stream  # type: ignore[assignment]
+        try:
+            # Request-level "report" should override assistant's "form_fill"
+            resp = await client.post(
+                f"/chat/stream?assistant_id={assistant.id}",
+                json={"message": "hello", "response_format": "report"},
+            )
+            assert resp.status_code == 200
+            # The captured format should be ReportResponse, not FormFillResponse
+            assert captured.get("response_format") is ReportResponse
+        finally:
+            agent_service.stream_response = original  # type: ignore[assignment]

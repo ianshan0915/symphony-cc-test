@@ -41,7 +41,7 @@ Or use the registry helper::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -183,7 +183,7 @@ class APIIntegrationResponse(BaseModel):
         agent = create_deep_agent(response_format=APIIntegrationResponse)
     """
 
-    status: str = Field(
+    status: Literal["success", "partial", "error"] = Field(
         default="success",
         description="Response status: 'success', 'partial', or 'error'",
     )

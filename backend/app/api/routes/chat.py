@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -55,16 +55,18 @@ class ChatRequest(BaseModel):
         default=None,
         description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
     )
-    response_format: str | None = Field(
-        default=None,
-        description=(
-            "Named response format for structured output.  One of: "
-            "'data_extraction', 'report', 'form_fill', 'api_integration'.  "
-            "When set the agent constrains its final response to the "
-            "corresponding JSON schema and the message_end SSE event will "
-            "include a 'structured_response' field.  Overrides any "
-            "response_format configured on the assistant."
-        ),
+    response_format: Literal["data_extraction", "report", "form_fill", "api_integration"] | None = (
+        Field(
+            default=None,
+            description=(
+                "Named response format for structured output.  One of: "
+                "'data_extraction', 'report', 'form_fill', 'api_integration'.  "
+                "When set the agent constrains its final response to the "
+                "corresponding JSON schema and the message_end SSE event will "
+                "include a 'structured_response' field.  Overrides any "
+                "response_format configured on the assistant."
+            ),
+        )
     )
 
 
@@ -203,13 +205,17 @@ async def chat_stream(
         else:
             logger.warning("Assistant %s not found, falling back to default agent", assistant_id)
 
-    # Resolve the named format to a Pydantic class
+    # Resolve the named format to a Pydantic class.
+    # Request-level values are pre-validated as a Literal type so they are
+    # always registry-valid.  Values sourced from assistant metadata (DB) are
+    # not validated at request time and may be stale — log a warning and
+    # continue with unstructured output rather than failing mid-stream.
     resolved_response_format: type[BaseModel] | None = None
     if response_format_name is not None:
         resolved_response_format = RESPONSE_FORMAT_REGISTRY.get(response_format_name)
         if resolved_response_format is None:
             logger.warning(
-                "Unknown response_format %r — ignoring (valid choices: %s)",
+                "Unknown response_format %r from assistant metadata — ignoring (valid choices: %s)",
                 response_format_name,
                 ", ".join(RESPONSE_FORMAT_REGISTRY),
             )

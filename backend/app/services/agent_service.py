@@ -106,6 +106,11 @@ class AgentService:
         self._agent = agent
         # Map of thread_id -> _PendingInterrupt for active interrupt requests
         self._pending_interrupts: dict[str, _PendingInterrupt] = {}
+        # Cache for structured-format agents keyed by (assistant_type, response_format_class).
+        # Avoids re-compiling the same agent graph on every structured-output request.
+        self._format_agent_cache: dict[
+            tuple[str | None, type[BaseModel] | None], CompiledStateGraph  # type: ignore[type-arg]
+        ] = {}
 
     @property
     def agent(self) -> CompiledStateGraph:  # type: ignore[type-arg]
@@ -136,11 +141,20 @@ class AgentService:
         """
         if (not assistant_type or assistant_type == "general") and response_format is None:
             return self.agent
-        return create_deep_agent(
+
+        # Use a per-(type, format) cache to avoid re-compiling graphs on every request.
+        cache_key = (assistant_type, response_format)
+        cached = self._format_agent_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        new_agent = create_deep_agent(
             assistant_type=assistant_type,
             interrupt_on=INTERRUPT_ON,
             response_format=response_format,
         )
+        self._format_agent_cache[cache_key] = new_agent
+        return new_agent
 
     def set_agent(self, agent: CompiledStateGraph) -> None:  # type: ignore[type-arg]
         """Replace the current agent graph (useful for testing)."""
