@@ -4,7 +4,7 @@ The adapter translates two LangGraph ``astream()`` stream modes into the SSE
 event vocabulary expected by the frontend (``ChatInterface.tsx``):
 
 * **messages** mode → ``token``, ``tool_call`` SSE events
-* **updates** mode → ``tool_result`` SSE events, plus interrupt detection
+* **updates** mode → ``tool_result``, ``todo_update`` SSE events, plus interrupt detection
 
 V2 streaming with ``subgraphs=True`` adds a namespace (``ns``) field to
 events, enabling detection of subagent execution.  Subagent events are
@@ -19,13 +19,19 @@ This module is intentionally stateless — all state lives in
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from app.services.sse import SSEEvent
 
 logger = logging.getLogger(__name__)
+
+# LangGraph injects interrupt data under this reserved key in updates-mode payloads.
+_INTERRUPT_KEY = "__interrupt__"
+
+# Valid planning-tool status values surfaced via ``todo_update`` SSE events.
+TodoStatus = Literal["pending", "in_progress", "completed"]
 
 # Native filesystem tool names provided by deepagents when a backend is
 # configured.  Used to emit ``file_event`` SSE events alongside the
@@ -127,7 +133,7 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
     events: list[SSEEvent] = []
 
     for node_name, node_output in update.items():
-        if node_name == "__interrupt__":
+        if node_name == _INTERRUPT_KEY:
             continue  # handled separately by extract_interrupt()
 
         messages: list[Any] = []
@@ -201,6 +207,76 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
 
 # ---------------------------------------------------------------------------
+# Todo update mapping
+# ---------------------------------------------------------------------------
+
+
+def map_todo_update(update: dict[str, Any]) -> list[SSEEvent]:
+    """Map a LangGraph *updates*-mode payload to ``todo_update`` SSE events.
+
+    Detects ``write_todos`` tool calls by inspecting state updates for a
+    ``todos`` key, which is populated whenever the agent calls the built-in
+    ``write_todos`` planning tool (provided by ``TodoListMiddleware``).
+
+    The ``write_todos`` tool stores its input directly in the graph state as
+    ``todos: list[Todo]``, where each ``Todo`` has ``content`` and ``status``
+    fields.  This function maps those to the frontend-facing format:
+
+    .. code-block:: json
+
+        {
+          "event": "todo_update",
+          "data": {
+            "todos": [
+              {"id": "1", "description": "Research API options", "status": "completed"},
+              {"id": "2", "description": "Write implementation", "status": "in_progress"},
+              {"id": "3", "description": "Add tests", "status": "pending"}
+            ]
+          }
+        }
+
+    Parameters
+    ----------
+    update:
+        A dict of ``{node_name: state_update}`` pairs yielded by
+        ``astream(stream_mode="updates")``.
+
+    Returns
+    -------
+    list[SSEEvent]
+        ``todo_update`` SSE events if a ``write_todos`` call is detected,
+        otherwise an empty list.
+    """
+    events: list[SSEEvent] = []
+
+    for node_name, node_output in update.items():
+        if node_name == _INTERRUPT_KEY:
+            continue
+
+        if not isinstance(node_output, dict):
+            continue
+
+        todos_raw = node_output.get("todos")
+        if not isinstance(todos_raw, list):
+            continue
+
+        # Map Todo TypedDicts ({content, status}) → frontend format ({id, description, status}).
+        # Index-based IDs (1-based) are stable for a given write_todos call and sufficient
+        # for the frontend to render the list — the agent replaces the entire list each call.
+        todos = [
+            {
+                "id": str(i + 1),
+                "description": item.get("content", "") if isinstance(item, dict) else str(item),
+                "status": item.get("status", "pending") if isinstance(item, dict) else "pending",
+            }
+            for i, item in enumerate(todos_raw)
+        ]
+        events.append(SSEEvent(event="todo_update", data={"todos": todos}))
+
+    return events
+
+
+# ---------------------------------------------------------------------------
 # Interrupt extraction
 # ---------------------------------------------------------------------------
 
@@ -222,7 +298,7 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
         The interrupt payload (tool_name, tool_args, allowed_decisions, etc.)
         or ``None`` if the update does not represent an interrupt.
     """
-    interrupts = update.get("__interrupt__")
+    interrupts = update.get(_INTERRUPT_KEY)
     if not interrupts:
         return None
 
@@ -280,7 +356,7 @@ def extract_subagent_namespace(ns: tuple[str, ...] | None) -> str | None:
     name = first.split(":")[0] if ":" in first else first
 
     # Skip internal LangGraph node names that aren't subagents
-    if name in ("tools", "__interrupt__", "agent"):
+    if name in ("tools", _INTERRUPT_KEY, "agent"):
         return None
 
     return name if name else None

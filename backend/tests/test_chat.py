@@ -279,12 +279,14 @@ class TestChatStreamEndpoint:
                 call_count += 1
                 return "2026-01-01T00:00:00" if call_count == 1 else "2026-01-01T00:01:00"
 
-            with patch.object(mw, "_memory_store", mw.get_memory_store()):
-                with patch("app.api.routes.chat.get_agents_md_modified_at", fake_modified_at):
-                    resp = await client.post(
-                        f"/chat/stream?thread_id={thread.id}",
-                        json={"message": "hello"},
-                    )
+            with (
+                patch.object(mw, "_memory_store", mw.get_memory_store()),
+                patch("app.api.routes.chat.get_agents_md_modified_at", fake_modified_at),
+            ):
+                resp = await client.post(
+                    f"/chat/stream?thread_id={thread.id}",
+                    json={"message": "hello"},
+                )
             assert resp.status_code == 200
             assert "event: memory_updated" in resp.text
         finally:
@@ -349,6 +351,7 @@ class TestChatStreamEndpoint:
         original_stream = agent_service.stream_response
         agent_service.stream_response = mock_stream  # type: ignore[assignment]
         try:
+
             async def fake_modified_at_none(user_id: str | None = None) -> None:
                 return None
 
