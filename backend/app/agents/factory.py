@@ -263,16 +263,34 @@ def _make_default_backend() -> Any:
     Returns a callable ``(ToolRuntime) -> CompositeBackend`` that routes:
 
     * ``/memories/`` paths → ``StoreBackend`` (persistent, cross-thread storage)
-    * All other paths → ``StateBackend`` (ephemeral, checkpointed per-thread)
+    * All other paths → sandbox backend when configured, otherwise
+      ``StateBackend`` (ephemeral, checkpointed per-thread)
+
+    When ``SANDBOX_BACKEND`` is set to ``LOCAL_SHELL`` (the default),
+    :class:`~deepagents.backends.LocalShellBackend` is used as the default
+    backend.  This provides both native filesystem operations *and* the
+    ``execute`` tool so agents can run shell commands in addition to reading
+    and writing files.
+
+    Setting ``SANDBOX_BACKEND=NONE`` disables the sandbox and falls back
+    to :class:`~deepagents.backends.StateBackend` (no ``execute`` tool).
 
     ``StoreBackend`` resolves the LangGraph store from the runtime at call
     time (via ``rt.store``), so no store reference is needed at factory
     construction time.
     """
+    from app.agents.sandbox import create_sandbox_backend
 
     def _backend_factory(rt: Any) -> CompositeBackend:
+        # Use sandbox backend as the default when one is configured.
+        # LocalShellBackend is stateless in virtual_mode so creating a new
+        # instance per invocation is safe and avoids shared-state issues
+        # across concurrent threads.
+        sandbox = create_sandbox_backend()
+        default: Any = sandbox if sandbox is not None else StateBackend(rt)
+
         return CompositeBackend(
-            default=StateBackend(rt),
+            default=default,
             # Pass an explicit namespace factory so StoreBackend resolves the
             # per-user namespace ("filesystem", user_id) instead of the legacy
             # global ("filesystem",).  This ensures the agent reads from the
@@ -498,7 +516,7 @@ def create_deep_agent(
     logger.info(
         "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, subagents=%d, "
         "summarization_trigger=[fraction=%.0f%%, messages=%d], summarization_keep=%d msgs, "
-        "checkpointer=%s, store=%s, backend=%s, response_format=%s",
+        "checkpointer=%s, store=%s, backend=%s, sandbox=%s, response_format=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
@@ -510,6 +528,7 @@ def create_deep_agent(
         type(saver).__name__,
         type(memory_store).__name__,
         "factory" if callable(agent_backend) else type(agent_backend).__name__,
+        settings.sandbox_backend,
         response_format.__name__ if response_format is not None else None,
     )
 
