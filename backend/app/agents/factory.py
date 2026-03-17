@@ -2,6 +2,29 @@
 
 Supports specialized agent types (researcher, coder, writer) via
 ``assistant_type`` parameter, with prompt caching for repeat invocations.
+
+Long-conversation support
+--------------------------
+``deepagents`` automatically includes ``SummarizationMiddleware`` in every
+agent with model-aware defaults (85 % fraction trigger / 10 % fraction keep
+for profiled models).  Symphony adds an *explicit* second instance so that:
+
+* thresholds are visible and documented in ``app.config.Settings``,
+* a message-count safety net fires even for models without profile data,
+* the ``keep`` policy is always the same predictable "last N messages"
+  regardless of model context-window size.
+
+Configuration knobs (all settable via environment variables):
+
+``SUMMARIZATION_TRIGGER_FRACTION`` (default 0.85)
+    Fraction of the model's context window that activates summarisation.
+``SUMMARIZATION_TRIGGER_MESSAGES`` (default 200)
+    Message-count fallback trigger (models without profile data).
+``SUMMARIZATION_KEEP_MESSAGES`` (default 20)
+    Number of recent messages preserved verbatim after summarisation.
+``SUMMARIZATION_SUMMARY_PROMPT`` (default "")
+    Optional custom prompt for the summarisation LLM call; empty → deepagents
+    default prompt.
 """
 
 from __future__ import annotations
@@ -16,6 +39,7 @@ from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
 from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
+from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
@@ -340,6 +364,25 @@ def create_deep_agent(
     -------
     CompiledStateGraph
         A compiled deep agent ready for streaming invocation.
+
+    Notes
+    -----
+    **Summarization / long-conversation support**
+
+    ``deepagents`` includes ``SummarizationMiddleware`` automatically with
+    model-aware defaults (fraction-based trigger for profiled models).
+    Symphony adds an *explicit* second instance (appended to the middleware
+    stack via the ``middleware`` kwarg) so that:
+
+    * Thresholds are surfaced in application config and logs.
+    * A message-count safety net applies even for models without profile data.
+    * The ``keep`` policy is a predictable "last N messages" (configurable via
+      ``settings.summarization_keep_messages``) rather than a fraction.
+
+    The middleware is positioned *after* the deepagents default, meaning the
+    default model-aware summarisation fires first; the explicit one provides a
+    secondary safety net for cases where the fraction-based trigger does not
+    apply (e.g. custom/unlisted models).
     """
     # Ensure LangSmith tracing env vars are configured
     _configure_langsmith()
@@ -384,14 +427,76 @@ def create_deep_agent(
             model_kwargs=model_kwargs,
         )
 
+    # ------------------------------------------------------------------
+    # Explicit SummarizationMiddleware configuration
+    # ------------------------------------------------------------------
+    # deepagents already includes SummarizationMiddleware internally with
+    # model-aware defaults.  We build an *additional* explicit instance here
+    # so that our intended thresholds are documented, logged, and tunable via
+    # environment variables without patching deepagents internals.
+    #
+    # Trigger strategy (first condition that fires wins):
+    #   1. Fraction-based (settings.summarization_trigger_fraction, default 0.85)
+    #      → fires for profiled models (GPT-4, Claude, etc.)
+    #      → skipped gracefully if the model has no context-window profile.
+    #   2. Message-count (settings.summarization_trigger_messages, default 200)
+    #      → absolute safety net for models whose context-window size is unknown.
+    #
+    # Keep: last N messages (settings.summarization_keep_messages, default 20)
+    #   Predictable and environment-tunable, unlike a context-window fraction.
+    #
+    # Summary prompt: optional override via settings.summarization_summary_prompt.
+    summ_kwargs: dict[str, Any] = {
+        "model": llm,
+        "backend": StateBackend,
+        "keep": ("messages", settings.summarization_keep_messages),
+    }
+    if settings.summarization_summary_prompt:
+        summ_kwargs["summary_prompt"] = settings.summarization_summary_prompt
+
+    # Prefer dual trigger (fraction + message-count) when the model exposes
+    # profile data.  Fall back to message-count-only if fraction triggers raise
+    # ValueError (model has no context-window profile).
+    try:
+        summarization_mw = SummarizationMiddleware(
+            trigger=[
+                ("fraction", settings.summarization_trigger_fraction),
+                ("messages", settings.summarization_trigger_messages),
+            ],
+            **summ_kwargs,
+        )
+        logger.debug(
+            "SummarizationMiddleware: fraction=%.0f%% + messages=%d trigger, keep=%d msgs",
+            settings.summarization_trigger_fraction * 100,
+            settings.summarization_trigger_messages,
+            settings.summarization_keep_messages,
+        )
+    except ValueError:
+        # Model profile unavailable — fraction trigger not supported; use
+        # message-count-only trigger as a reliable fallback.
+        logger.info(
+            "SummarizationMiddleware: model profile unavailable; "
+            "falling back to message-count trigger=%d, keep=%d msgs",
+            settings.summarization_trigger_messages,
+            settings.summarization_keep_messages,
+        )
+        summarization_mw = SummarizationMiddleware(
+            trigger=("messages", settings.summarization_trigger_messages),
+            **summ_kwargs,
+        )
+
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "subagents=%d, checkpointer=%s, store=%s, backend=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, subagents=%d, "
+        "summarization_trigger=[fraction=%.0f%%, messages=%d], summarization_keep=%d msgs, "
+        "checkpointer=%s, store=%s, backend=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
         len(skill_paths),
         len(resolved_subagents) if resolved_subagents else 0,
+        settings.summarization_trigger_fraction * 100,
+        settings.summarization_trigger_messages,
+        settings.summarization_keep_messages,
         type(saver).__name__,
         type(memory_store).__name__,
         "factory" if callable(agent_backend) else type(agent_backend).__name__,
@@ -416,6 +521,9 @@ def create_deep_agent(
         # (middleware._seed_agents_md_if_missing) and the API endpoints
         # (GET/PUT /memory), ensuring agents always see the latest content.
         "memory": ["/memories/AGENTS.md"],
+        # Explicit summarization middleware appended after deepagents defaults.
+        # See module docstring for rationale.
+        "middleware": [summarization_mw],
     }
 
     # Pass skills to deepagents if any were resolved
