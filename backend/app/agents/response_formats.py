@@ -41,10 +41,9 @@ Or use the registry helper::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Data extraction
@@ -57,7 +56,7 @@ class ExtractedField(BaseModel):
     name: str = Field(..., description="Field name")
     value: Any = Field(..., description="Extracted value")
     confidence: float = Field(
-        default=1.0, ge=0.0, le=1.0, description="Confidence score 0–1"
+        default=1.0, ge=0.0, le=1.0, description="Confidence score 0-1"
     )
 
 
@@ -81,7 +80,7 @@ class DataExtractionResponse(BaseModel):
         default="",
         description="Brief summary of the source text",
     )
-    extraction_notes: Optional[str] = Field(
+    extraction_notes: str | None = Field(
         default=None,
         description="Notes on ambiguities or low-confidence fields",
     )
@@ -97,7 +96,7 @@ class ReportSection(BaseModel):
 
     title: str = Field(..., description="Section title")
     content: str = Field(..., description="Section body content")
-    subsections: list["ReportSection"] = Field(
+    subsections: list[ReportSection] = Field(
         default_factory=list,
         description="Optional nested subsections",
     )
@@ -147,7 +146,7 @@ class FormField(BaseModel):
     is_required: bool = Field(
         default=False, description="Whether the field is mandatory"
     )
-    validation_error: Optional[str] = Field(
+    validation_error: str | None = Field(
         default=None,
         description="Validation error message if the value is invalid",
     )

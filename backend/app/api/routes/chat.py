@@ -204,9 +204,7 @@ async def chat_stream(
             logger.warning("Assistant %s not found, falling back to default agent", assistant_id)
 
     # Resolve the named format to a Pydantic class
-    from pydantic import BaseModel as _BaseModel
-
-    resolved_response_format: type[_BaseModel] | None = None
+    resolved_response_format: type[BaseModel] | None = None
     if response_format_name is not None:
         resolved_response_format = RESPONSE_FORMAT_REGISTRY.get(response_format_name)
         if resolved_response_format is None:
