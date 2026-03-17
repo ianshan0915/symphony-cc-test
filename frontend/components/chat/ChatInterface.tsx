@@ -297,141 +297,93 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   /**
-   * Handle approval of a pending tool call.
+   * Shared handler for all approval decisions (approve / reject / edit).
+   * Submits the decision to the backend and updates local task/message state.
    */
+  const handleApprovalDecision = React.useCallback(
+    async (
+      decision: "approve" | "reject" | "edit",
+      options?: { reason?: string; modifiedArgs?: Record<string, unknown> }
+    ) => {
+      if (!pendingApproval) return;
+      setIsApprovalSubmitting(true);
+
+      const approvalId = pendingApproval.id;
+
+      try {
+        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thread_id: pendingApproval.threadId,
+            decision,
+            ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+            ...(options?.modifiedArgs !== undefined ? { modified_args: options.modifiedArgs } : {}),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Approval decision failed: ${response.statusText}`);
+        }
+
+        if (decision === "reject") {
+          // Update task status to failed
+          setTasks((prev) =>
+            prev.map((t) => (t.id === approvalId ? { ...t, status: "failed" as const } : t))
+          );
+          // Mark tool call as rejected in messages
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (!msg.toolCalls) return msg;
+              return {
+                ...msg,
+                toolCalls: msg.toolCalls.map((tc) =>
+                  tc.id === approvalId
+                    ? { ...tc, status: "rejected" as const, result: options?.reason ?? "Rejected by user" }
+                    : tc
+                ),
+              };
+            })
+          );
+        } else {
+          // approve or edit — advance to in_progress, optionally update args
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === approvalId
+                ? {
+                    ...t,
+                    status: "in_progress" as const,
+                    ...(options?.modifiedArgs !== undefined ? { toolArgs: options.modifiedArgs } : {}),
+                  }
+                : t
+            )
+          );
+        }
+
+        setPendingApproval(null);
+      } catch (error) {
+        console.error("Failed to submit approval decision:", error);
+      } finally {
+        setIsApprovalSubmitting(false);
+      }
+    },
+    [pendingApproval]
+  );
+
   const handleApprove = React.useCallback(
-    async (approvalId: string) => {
-      if (!pendingApproval) return;
-      setIsApprovalSubmitting(true);
-
-      try {
-        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            thread_id: pendingApproval.threadId,
-            decision: "approve",
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Approval failed: ${response.statusText}`);
-        }
-
-        // Update task status
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === approvalId
-              ? { ...t, status: "in_progress" as const }
-              : t
-          )
-        );
-
-        setPendingApproval(null);
-      } catch (error) {
-        console.error("Failed to submit approval:", error);
-      } finally {
-        setIsApprovalSubmitting(false);
-      }
-    },
-    [pendingApproval]
+    (_approvalId: string) => handleApprovalDecision("approve"),
+    [handleApprovalDecision]
   );
 
-  /**
-   * Handle rejection of a pending tool call.
-   */
   const handleReject = React.useCallback(
-    async (approvalId: string, reason?: string) => {
-      if (!pendingApproval) return;
-      setIsApprovalSubmitting(true);
-
-      try {
-        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            thread_id: pendingApproval.threadId,
-            decision: "reject",
-            reason,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Rejection failed: ${response.statusText}`);
-        }
-
-        // Update task status
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === approvalId ? { ...t, status: "failed" as const } : t
-          )
-        );
-
-        // Update tool call status in messages
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (!msg.toolCalls) return msg;
-            return {
-              ...msg,
-              toolCalls: msg.toolCalls.map((tc) =>
-                tc.id === approvalId
-                  ? { ...tc, status: "rejected" as const, result: reason ?? "Rejected by user" }
-                  : tc
-              ),
-            };
-          })
-        );
-
-        setPendingApproval(null);
-      } catch (error) {
-        console.error("Failed to submit rejection:", error);
-      } finally {
-        setIsApprovalSubmitting(false);
-      }
-    },
-    [pendingApproval]
+    (_approvalId: string, reason?: string) => handleApprovalDecision("reject", { reason }),
+    [handleApprovalDecision]
   );
 
-  /**
-   * Handle edit-and-approve of a pending tool call with modified arguments.
-   */
   const handleEdit = React.useCallback(
-    async (approvalId: string, modifiedArgs: Record<string, unknown>) => {
-      if (!pendingApproval) return;
-      setIsApprovalSubmitting(true);
-
-      try {
-        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            thread_id: pendingApproval.threadId,
-            decision: "edit",
-            modified_args: modifiedArgs,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Edit approval failed: ${response.statusText}`);
-        }
-
-        // Update task status and args
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === approvalId
-              ? { ...t, status: "in_progress" as const, toolArgs: modifiedArgs }
-              : t
-          )
-        );
-
-        setPendingApproval(null);
-      } catch (error) {
-        console.error("Failed to submit edit:", error);
-      } finally {
-        setIsApprovalSubmitting(false);
-      }
-    },
-    [pendingApproval]
+    (_approvalId: string, modifiedArgs: Record<string, unknown>) =>
+      handleApprovalDecision("edit", { modifiedArgs }),
+    [handleApprovalDecision]
   );
 
   return (

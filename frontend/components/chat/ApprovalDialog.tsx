@@ -29,6 +29,8 @@ export interface ApprovalDialogProps {
   className?: string;
 }
 
+type DialogMode = "idle" | "editing" | "rejecting";
+
 /**
  * ApprovalDialog — modal dialog shown when the agent encounters a tool call
  * that requires human approval before execution.
@@ -44,16 +46,14 @@ export function ApprovalDialog({
   className,
 }: ApprovalDialogProps) {
   const [rejectReason, setRejectReason] = React.useState("");
-  const [showRejectInput, setShowRejectInput] = React.useState(false);
-  const [showEditInput, setShowEditInput] = React.useState(false);
+  const [mode, setMode] = React.useState<DialogMode>("idle");
   const [editArgsText, setEditArgsText] = React.useState("");
   const [editArgsError, setEditArgsError] = React.useState<string | null>(null);
 
   // Reset state when approval changes
   React.useEffect(() => {
     setRejectReason("");
-    setShowRejectInput(false);
-    setShowEditInput(false);
+    setMode("idle");
     setEditArgsText("");
     setEditArgsError(null);
   }, [approval?.id]);
@@ -65,16 +65,15 @@ export function ApprovalDialog({
   };
 
   const handleReject = () => {
-    if (showRejectInput) {
+    if (mode === "rejecting") {
       onReject(approval.id, rejectReason || undefined);
     } else {
-      setShowRejectInput(true);
-      setShowEditInput(false);
+      setMode("rejecting");
     }
   };
 
   const handleEditClick = () => {
-    if (showEditInput) {
+    if (mode === "editing") {
       // Attempt to parse and submit
       try {
         const parsed = JSON.parse(editArgsText) as Record<string, unknown>;
@@ -86,8 +85,7 @@ export function ApprovalDialog({
     } else {
       setEditArgsText(JSON.stringify(approval.toolArgs, null, 2));
       setEditArgsError(null);
-      setShowEditInput(true);
-      setShowRejectInput(false);
+      setMode("editing");
     }
   };
 
@@ -120,7 +118,7 @@ export function ApprovalDialog({
           </div>
 
           {/* Arguments — read-only when not editing */}
-          {!showEditInput &&
+          {mode !== "editing" &&
             approval.toolArgs &&
             Object.keys(approval.toolArgs).length > 0 && (
               <div>
@@ -134,7 +132,7 @@ export function ApprovalDialog({
             )}
 
           {/* Edit args textarea */}
-          {showEditInput && (
+          {mode === "editing" && (
             <div>
               <label
                 htmlFor="edit-args"
@@ -160,7 +158,7 @@ export function ApprovalDialog({
           )}
 
           {/* Reject reason input */}
-          {showRejectInput && (
+          {mode === "rejecting" && (
             <div>
               <label
                 htmlFor="reject-reason"
@@ -188,7 +186,7 @@ export function ApprovalDialog({
             className="gap-1.5"
           >
             <XCircle className="h-4 w-4" />
-            {showRejectInput ? "Confirm Reject" : "Reject"}
+            {mode === "rejecting" ? "Confirm Reject" : "Reject"}
           </Button>
           <Button
             variant="outline"
@@ -197,7 +195,7 @@ export function ApprovalDialog({
             className="gap-1.5"
           >
             <Pencil className="h-4 w-4" />
-            {showEditInput ? "Confirm Edit" : "Edit"}
+            {mode === "editing" ? "Confirm Edit" : "Edit"}
           </Button>
           <Button
             onClick={handleApprove}
