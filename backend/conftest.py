@@ -26,3 +26,14 @@ if "deepagents" not in sys.modules:
     _backends.StateBackend = MagicMock(name="StateBackend")  # type: ignore[attr-defined]
     _backends.StoreBackend = MagicMock(name="StoreBackend")  # type: ignore[attr-defined]
     sys.modules["deepagents.backends"] = _backends
+
+    # --- deepagents.middleware (sub-package) ---
+    _middleware = types.ModuleType("deepagents.middleware")
+    sys.modules["deepagents.middleware"] = _middleware
+
+    # --- deepagents.middleware.summarization ---
+    _summarization = types.ModuleType("deepagents.middleware.summarization")
+    _summarization.SummarizationMiddleware = MagicMock(  # type: ignore[attr-defined]
+        name="SummarizationMiddleware"
+    )
+    sys.modules["deepagents.middleware.summarization"] = _summarization

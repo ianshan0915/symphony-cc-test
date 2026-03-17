@@ -64,6 +64,26 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
 
+    # --- Summarization / long-conversation support ---
+    # SummarizationMiddleware is auto-included by deepagents with model-aware defaults
+    # (fraction-based for profiled models, fixed-token for others). The settings below
+    # document our *intended* thresholds and are passed as an explicit additional
+    # middleware layer so behaviour is visible, logged, and tunable without touching
+    # the deepagents internals.
+    #
+    # trigger_fraction: fraction of the model's context window that activates summarization.
+    #   E.g. 0.85 → summarise when 85 % of context is used.
+    # trigger_messages: message-count fallback trigger for models whose context window
+    #   size is not known (complements the fraction-based trigger).
+    # keep_messages: number of the most-recent messages to preserve verbatim after
+    #   summarisation.  Older messages are compressed into a summary.
+    # summary_prompt: optional custom prompt for the summarisation LLM call.
+    #   Leave empty to use the deepagents default.
+    summarization_trigger_fraction: float = 0.85
+    summarization_trigger_messages: int = 200
+    summarization_keep_messages: int = 20
+    summarization_summary_prompt: str = ""
+
     @property
     def database_url_psycopg(self) -> str:
         """Return a psycopg-compatible connection string.
