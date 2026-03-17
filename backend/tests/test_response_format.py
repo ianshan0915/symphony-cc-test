@@ -307,9 +307,7 @@ class TestAgentServiceGetAgent:
         assert svc.get_agent(assistant_type="general") is mock_agent
 
     @patch("app.services.agent_service.create_deep_agent")
-    def test_creates_new_agent_with_response_format(
-        self, mock_create: MagicMock
-    ) -> None:
+    def test_creates_new_agent_with_response_format(self, mock_create: MagicMock) -> None:
         """A new agent is created when response_format is specified."""
         new_agent = MagicMock()
         mock_create.return_value = new_agent
@@ -323,9 +321,7 @@ class TestAgentServiceGetAgent:
         assert call_kwargs.get("response_format") is DataExtractionResponse
 
     @patch("app.services.agent_service.create_deep_agent")
-    def test_creates_new_agent_with_type_and_format(
-        self, mock_create: MagicMock
-    ) -> None:
+    def test_creates_new_agent_with_type_and_format(self, mock_create: MagicMock) -> None:
         """Both assistant_type and response_format are forwarded."""
         mock_create.return_value = MagicMock()
 
