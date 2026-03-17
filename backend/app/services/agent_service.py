@@ -128,7 +128,9 @@ class AgentService:
 
         If *assistant_type* is ``None`` or ``"general"`` **and** no
         *response_format* is requested, returns the shared singleton agent.
-        Otherwise a new agent is created with the appropriate configuration.
+        Otherwise returns a cached agent for the ``(assistant_type,
+        response_format)`` combination, creating one on the first call and
+        reusing it on subsequent calls.
 
         Parameters
         ----------
@@ -136,8 +138,9 @@ class AgentService:
             Agent specialization type.
         response_format:
             Optional Pydantic model class for structured output.  When
-            provided a new agent is always created (the singleton cannot
-            be shared because it would be locked to one schema).
+            provided, the agent is looked up in a per-``(assistant_type,
+            response_format)`` cache so graph compilation happens only once
+            per unique combination.
         """
         if (not assistant_type or assistant_type == "general") and response_format is None:
             return self.agent
