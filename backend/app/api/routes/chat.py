@@ -11,7 +11,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.middleware import get_agents_md_modified_at
+from app.agents.response_formats import RESPONSE_FORMAT_REGISTRY
 from app.api.deps import (
+    get_current_user,
     get_db_session,
     rate_limiter,
     rate_limiter_strict,
@@ -19,8 +22,10 @@ from app.api.deps import (
 )
 from app.models.message import Message
 from app.models.thread import Thread
-from app.services.agent_service import SSEEvent, agent_service
+from app.models.user import User
+from app.services.agent_service import _DECISION_PAST_TENSE, agent_service
 from app.services.assistant_service import AssistantService
+from app.services.sse import SSEEvent
 from app.services.thread_service import ThreadService
 
 logger = logging.getLogger(__name__)
@@ -50,14 +55,33 @@ class ChatRequest(BaseModel):
         default=None,
         description="Agent specialization type: 'researcher', 'coder', 'writer', or 'general'",
     )
+    response_format: str | None = Field(
+        default=None,
+        description=(
+            "Named response format for structured output.  One of: "
+            "'data_extraction', 'report', 'form_fill', 'api_integration'.  "
+            "When set the agent constrains its final response to the "
+            "corresponding JSON schema and the message_end SSE event will "
+            "include a 'structured_response' field.  Overrides any "
+            "response_format configured on the assistant."
+        ),
+    )
 
 
 class ApprovalDecisionRequest(BaseModel):
-    """Payload for approving or rejecting a pending tool call."""
+    """Payload for approving, editing, or rejecting a pending tool call."""
 
     thread_id: str = Field(..., description="Thread ID with a pending approval")
-    decision: str = Field(..., pattern="^(approve|reject)$", description="approve or reject")
+    decision: str = Field(
+        ...,
+        pattern="^(approve|edit|reject)$",
+        description="approve, edit, or reject",
+    )
     reason: str | None = Field(default=None, description="Optional reason for rejection")
+    modified_args: dict[str, Any] | None = Field(
+        default=None,
+        description="Modified tool arguments (required when decision is 'edit')",
+    )
 
 
 class ApprovalDecisionResponse(BaseModel):
@@ -78,6 +102,7 @@ class PendingApprovalResponse(BaseModel):
     tool_name: str | None = None
     tool_args: dict[str, Any] | None = None
     run_id: str | None = None
+    allowed_decisions: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +162,7 @@ async def chat_stream(
     body: ChatRequest,
     thread_id: uuid.UUID | None = None,
     assistant_id: uuid.UUID | None = None,
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
     """Stream an agent response as Server-Sent Events.
@@ -155,19 +181,38 @@ async def chat_stream(
     - ``approval_result`` — user approved or rejected the tool call
     - ``tool_result`` — tool execution result
     - ``message_end`` — assistant turn complete (includes full content)
+    - ``memory_updated`` — agent saved new memories during the conversation
     - ``error`` — an error occurred during processing
     """
     thread_svc = ThreadService(session)
 
-    # Resolve assistant_type from assistant_id or request body
+    # Resolve assistant_type and response_format from assistant_id or request body
     assistant_type = body.assistant_type
-    if assistant_id is not None and assistant_type is None:
+    # Start with the request-level response_format (takes precedence)
+    response_format_name: str | None = body.response_format
+    if assistant_id is not None and (assistant_type is None or response_format_name is None):
         assistant_svc = AssistantService(session)
-        assistant = await assistant_svc.get(assistant_id)
+        assistant = await assistant_svc.get(assistant_id, user_id=current_user.id)
         if assistant is not None:
-            assistant_type = (assistant.metadata_ or {}).get("agent_type")
+            meta = assistant.metadata_ or {}
+            if assistant_type is None:
+                assistant_type = meta.get("agent_type")
+            # Use assistant-configured response_format only when not overridden in request
+            if response_format_name is None:
+                response_format_name = meta.get("response_format")
         else:
             logger.warning("Assistant %s not found, falling back to default agent", assistant_id)
+
+    # Resolve the named format to a Pydantic class
+    resolved_response_format: type[BaseModel] | None = None
+    if response_format_name is not None:
+        resolved_response_format = RESPONSE_FORMAT_REGISTRY.get(response_format_name)
+        if resolved_response_format is None:
+            logger.warning(
+                "Unknown response_format %r — ignoring (valid choices: %s)",
+                response_format_name,
+                ", ".join(RESPONSE_FORMAT_REGISTRY),
+            )
 
     # Resolve or create thread
     thread: Thread | None = None
@@ -189,11 +234,20 @@ async def chat_stream(
         full_content = ""
         tool_calls: list[Any] = []
 
+        # Snapshot the AGENTS.md modification timestamp before the agent runs.
+        # We compare timestamps (not full content) after the run to detect
+        # whether the agent saved new memories — avoids reconstructing and
+        # comparing potentially large content strings.
+        user_id_str = str(current_user.id)
+        modified_at_before = await get_agents_md_modified_at(user_id=user_id_str)
+
         async for sse_event in agent_service.stream_response(
             thread_id=str(thread.id),
             user_message=body.message,
             thread=thread,
             assistant_type=assistant_type,
+            user_id=user_id_str,
+            response_format=resolved_response_format,
         ):
             # Capture final content for persistence
             if sse_event.event == "message_end":
@@ -201,6 +255,17 @@ async def chat_stream(
                 tool_calls = sse_event.data.get("tool_calls") or []
 
             yield sse_event.encode()
+
+        # Emit memory_updated if the agent changed the user's AGENTS.md.
+        try:
+            modified_at_after = await get_agents_md_modified_at(user_id=user_id_str)
+            if modified_at_after is not None and modified_at_after != modified_at_before:
+                yield SSEEvent(
+                    event="memory_updated",
+                    data={"thread_id": str(thread.id)},
+                ).encode()
+        except Exception:
+            logger.debug("Failed to compare AGENTS.md timestamps after agent run", exc_info=True)
 
         # Persist assistant response after streaming completes
         if full_content:
@@ -237,24 +302,25 @@ async def chat_stream(
 async def submit_approval_decision(
     body: ApprovalDecisionRequest,
 ) -> ApprovalDecisionResponse:
-    """Submit an approval or rejection decision for a pending tool call.
+    """Submit an approval, edit, or rejection decision for a pending tool call.
 
-    When the agent encounters a tool that requires human approval, the SSE
+    When the agent encounters a tool configured in ``interrupt_on``, the SSE
     stream emits an ``approval_required`` event and pauses execution.  The
-    frontend should call this endpoint to approve or reject the tool call,
-    which unblocks the stream.
+    frontend should call this endpoint to approve, edit, or reject the tool
+    call, which unblocks the stream.
 
     **Request body:**
 
     - ``thread_id`` — the thread with a pending approval
-    - ``decision`` — ``"approve"`` or ``"reject"``
+    - ``decision`` — ``"approve"``, ``"edit"``, or ``"reject"``
     - ``reason`` — optional reason for rejection
+    - ``modified_args`` — modified tool arguments (when decision is ``"edit"``)
     """
-    approved = body.decision == "approve"
-    resolved = await agent_service.resolve_approval(
-        thread_id=body.thread_id,
-        approved=approved,
+    resolved = await agent_service.resolve_interrupt(
+        body.thread_id,
+        decision=body.decision,
         reason=body.reason,
+        modified_args=body.modified_args,
     )
 
     if not resolved:
@@ -263,7 +329,7 @@ async def submit_approval_decision(
             detail=f"No pending approval found for thread {body.thread_id}",
         )
 
-    decision_label = "approved" if approved else "rejected"
+    decision_label = _DECISION_PAST_TENSE.get(body.decision, body.decision)
     return ApprovalDecisionResponse(
         success=True,
         thread_id=body.thread_id,
@@ -288,11 +354,13 @@ async def get_pending_approval(thread_id: str) -> PendingApprovalResponse:
     if pending is None:
         return PendingApprovalResponse(has_pending=False)
 
+    interrupt = pending.interrupt_data
     return PendingApprovalResponse(
         has_pending=True,
         approval_id=pending.approval_id,
         thread_id=pending.thread_id,
-        tool_name=pending.tool_name,
-        tool_args=pending.tool_args,
-        run_id=pending.run_id,
+        tool_name=interrupt.get("tool_name"),
+        tool_args=interrupt.get("tool_args"),
+        run_id=interrupt.get("run_id"),
+        allowed_decisions=interrupt.get("allowed_decisions"),
     )

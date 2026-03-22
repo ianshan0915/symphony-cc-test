@@ -189,10 +189,7 @@ class TestParseSkillMd:
         skill_dir = tmp_path / "actual-dir-name"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\n"
-            "name: different-name\n"
-            "description: Name does not match directory.\n"
-            "---\n"
+            "---\nname: different-name\ndescription: Name does not match directory.\n---\n"
         )
         meta = parse_skill_md(skill_dir / "SKILL.md")
         assert meta is not None
@@ -231,10 +228,7 @@ class TestParseSkillMd:
         skill_dir = tmp_path / "colon-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\n"
-            "name: colon-skill\n"
-            "description: Use when: the user asks about colons\n"
-            "---\n"
+            "---\nname: colon-skill\ndescription: Use when: the user asks about colons\n---\n"
         )
         # Should either parse or fallback — not crash
         # The specific behavior depends on whether YAML accepts this
@@ -289,17 +283,13 @@ class TestDiscoverSkills:
         dir1.mkdir()
         s1 = dir1 / "my-skill"
         s1.mkdir()
-        (s1 / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: System version.\n---\n"
-        )
+        (s1 / "SKILL.md").write_text("---\nname: my-skill\ndescription: System version.\n---\n")
 
         dir2 = tmp_path / "project"
         dir2.mkdir()
         s2 = dir2 / "my-skill"
         s2.mkdir()
-        (s2 / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: Project version.\n---\n"
-        )
+        (s2 / "SKILL.md").write_text("---\nname: my-skill\ndescription: Project version.\n---\n")
 
         skills = discover_skills(dir1, dir2)
         assert skills["my-skill"].description == "Project version."
@@ -323,9 +313,7 @@ class TestDiscoverSkills:
             deep.mkdir()
         skill = deep / "deep-skill"
         skill.mkdir()
-        (skill / "SKILL.md").write_text(
-            "---\nname: deep-skill\ndescription: Very deep.\n---\n"
-        )
+        (skill / "SKILL.md").write_text("---\nname: deep-skill\ndescription: Very deep.\n---\n")
 
         # Default max_depth=4 should not find it
         skills = discover_skills(tmp_path, max_depth=4)
@@ -471,8 +459,14 @@ class TestSystemSkills:
 
     def test_system_skills_include_expected_skills(self) -> None:
         skills = discover_skills(get_system_skills_dir())
-        expected = {"web-research", "data-analysis", "code-review", "debugging",
-                    "content-writing", "editing"}
+        expected = {
+            "web-research",
+            "data-analysis",
+            "code-review",
+            "debugging",
+            "content-writing",
+            "editing",
+        }
         found = set(skills.keys())
         assert expected.issubset(found), f"Missing skills: {expected - found}"
 

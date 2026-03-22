@@ -20,6 +20,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+          version: "0.10.11"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -60,6 +61,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+          version: "0.10.11"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

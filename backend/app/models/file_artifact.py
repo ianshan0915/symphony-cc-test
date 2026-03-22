@@ -4,9 +4,11 @@ Stores file artifacts created by the agent so they can be retrieved,
 listed, and managed through the file tools.
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, Index, String, Text, func
@@ -14,7 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.types import GUID, JSONType
-
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM model
@@ -42,9 +43,7 @@ class FileArtifact(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_file_artifacts_thread_path", "thread_id", "file_path"),
-    )
+    __table_args__ = (Index("ix_file_artifacts_thread_path", "thread_id", "file_path"),)
 
     def __repr__(self) -> str:
         return f"<FileArtifact id={self.id} path={self.file_path!r}>"
@@ -62,7 +61,7 @@ class FileArtifactCreate(BaseModel):
     file_path: str
     content: str = ""
     mime_type: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class FileArtifactOut(BaseModel):
@@ -75,7 +74,7 @@ class FileArtifactOut(BaseModel):
     file_path: str
     content: str
     mime_type: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict, alias="metadata_")
+    metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_")
     is_deleted: bool = False
     created_at: datetime
     updated_at: datetime

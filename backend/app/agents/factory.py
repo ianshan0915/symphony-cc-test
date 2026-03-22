@@ -2,6 +2,29 @@
 
 Supports specialized agent types (researcher, coder, writer) via
 ``assistant_type`` parameter, with prompt caching for repeat invocations.
+
+Long-conversation support
+--------------------------
+``deepagents`` automatically includes ``SummarizationMiddleware`` in every
+agent with model-aware defaults (85 % fraction trigger / 10 % fraction keep
+for profiled models).  Symphony adds an *explicit* second instance so that:
+
+* thresholds are visible and documented in ``app.config.Settings``,
+* a message-count safety net fires even for models without profile data,
+* the ``keep`` policy is always the same predictable "last N messages"
+  regardless of model context-window size.
+
+Configuration knobs (all settable via environment variables):
+
+``SUMMARIZATION_TRIGGER_FRACTION`` (default 0.85)
+    Fraction of the model's context window that activates summarisation.
+``SUMMARIZATION_TRIGGER_MESSAGES`` (default 200)
+    Message-count fallback trigger (models without profile data).
+``SUMMARIZATION_KEEP_MESSAGES`` (default 20)
+    Number of recent messages preserved verbatim after summarisation.
+``SUMMARIZATION_SUMMARY_PROMPT`` (default "")
+    Optional custom prompt for the summarisation LLM call; empty → deepagents
+    default prompt.
 """
 
 from __future__ import annotations
@@ -10,13 +33,17 @@ import hashlib
 import logging
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from deepagents import create_deep_agent as _deepagents_create
+from deepagents.backends import BackendContext, CompositeBackend, StateBackend, StoreBackend
+from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import BaseModel
 
 from app.agents.middleware import get_checkpointer, get_memory_store
 from app.agents.prompts import (
@@ -24,11 +51,51 @@ from app.agents.prompts import (
     get_prompt_for_agent_type,
     get_tools_for_agent_type,
 )
+from app.agents.sandbox import create_sandbox_backend, sandbox_manager
 from app.agents.skills import resolve_skill_paths
+from app.agents.subagents import build_subagent_configs
 from app.agents.tools import TOOL_REGISTRY
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Runtime context schema — carries per-request data (e.g. user_id) into the
+# agent's LangGraph runtime so backend factories can resolve user-scoped
+# namespaces without coupling to LangGraph config internals.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UserContext:
+    """Runtime context for deep agents, carrying the authenticated user's ID.
+
+    Passed as ``context=UserContext(user_id=...)`` when invoking the agent.
+    The ``_user_ns_factory`` below reads ``ctx.runtime.context.user_id`` to
+    resolve the per-user ``("filesystem", user_id)`` store namespace so that
+    ``StoreBackend`` reads/writes to the correct user's AGENTS.md.
+    """
+
+    user_id: str | None = None
+
+
+def _user_ns_factory(ctx: BackendContext) -> tuple[str, ...]:
+    """Resolve the LangGraph store namespace for a backend operation.
+
+    When a ``user_id`` is present in the runtime context the namespace is
+    scoped to that user: ``("filesystem", user_id)``.  This matches exactly
+    the namespace written by ``set_agents_md(content, user_id=...)`` in
+    ``middleware.py``, so the agent reads the same data the API writes.
+
+    Falls back to the global ``("filesystem",)`` namespace when no user
+    context is available (e.g. background jobs, tests without auth context).
+    """
+    context = getattr(ctx.runtime, "context", None)
+    user_id = getattr(context, "user_id", None) if context is not None else None
+    if user_id:
+        return ("filesystem", str(user_id))
+    return ("filesystem",)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +189,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         }
         if settings.anthropic_base_url:
             anthropic_kwargs["anthropic_api_url"] = settings.anthropic_base_url
-        return ChatAnthropic(**(anthropic_kwargs | kwargs))  # type: ignore[no-any-return]
+        return ChatAnthropic(**(anthropic_kwargs | kwargs))  # type: ignore[no-any-return, unused-ignore]
 
     # Default to OpenAI-compatible models
     try:
@@ -134,7 +201,7 @@ def _get_chat_model(model_name: str | None = None, **kwargs: Any) -> BaseChatMod
         ) from exc
     openai_kwargs: dict[str, Any] = {
         "model": model,
-        "api_key": settings.openai_api_key or None,  # type: ignore[arg-type]
+        "api_key": settings.openai_api_key or None,  # type: ignore[arg-type, unused-ignore]
         "streaming": True,
     }
     if settings.openai_base_url:
@@ -191,17 +258,92 @@ def _resolve_tools(
 # ---------------------------------------------------------------------------
 
 
+def _make_default_backend() -> Any:
+    """Create the default CompositeBackend factory for deep agents.
+
+    Returns a callable ``(ToolRuntime) -> CompositeBackend`` that routes:
+
+    * ``/memories/`` paths → ``StoreBackend`` (persistent, cross-thread storage)
+    * All other paths → sandbox backend when configured, otherwise
+      ``StateBackend`` (ephemeral, checkpointed per-thread)
+
+    When ``SANDBOX_BACKEND`` is set to ``LOCAL_SHELL`` (the default),
+    :class:`~deepagents.backends.LocalShellBackend` is used as the default
+    backend.  This provides both native filesystem operations *and* the
+    ``execute`` tool so agents can run shell commands in addition to reading
+    and writing files.
+
+    Setting ``SANDBOX_BACKEND=NONE`` disables the sandbox and falls back
+    to :class:`~deepagents.backends.StateBackend` (no ``execute`` tool).
+
+    ``StoreBackend`` resolves the LangGraph store from the runtime at call
+    time (via ``rt.store``), so no store reference is needed at factory
+    construction time.
+
+    Sandbox lifecycle
+    -----------------
+    When a ``thread_id`` is available in the LangGraph runtime config (the
+    normal case for all agent invocations), the backend is obtained via
+    :data:`~app.agents.sandbox.sandbox_manager` so that:
+
+    * The same backend instance is reused for all turns in a session.
+    * :meth:`~app.agents.sandbox.SandboxManager.cleanup_all` called at
+      shutdown can terminate all active cloud sandboxes.
+
+    When no ``thread_id`` is present (e.g. unit tests or direct
+    ``_backend_factory`` calls without LangGraph config), the factory
+    falls back to :func:`~app.agents.sandbox.create_sandbox_backend` and
+    creates a fresh, untracked instance — acceptable because
+    ``LocalShellBackend`` in virtual mode is stateless.
+    """
+
+    def _backend_factory(rt: Any) -> CompositeBackend:
+        # Extract thread_id from the LangGraph runtime config so the same
+        # sandbox backend is reused for all turns in a session and can be
+        # properly cleaned up at session end / shutdown.
+        config = getattr(rt, "config", None)
+        thread_id: str | None = None
+        if isinstance(config, dict):
+            thread_id = config.get("configurable", {}).get("thread_id")
+
+        if thread_id:
+            sandbox = sandbox_manager.get_or_create(thread_id)
+        else:
+            # No thread_id available (e.g. tests): create a fresh, untracked
+            # instance.  LocalShellBackend is stateless so this is safe.
+            sandbox = create_sandbox_backend()
+
+        default: Any = sandbox if sandbox is not None else StateBackend(rt)
+
+        return CompositeBackend(
+            default=default,
+            # Pass an explicit namespace factory so StoreBackend resolves the
+            # per-user namespace ("filesystem", user_id) instead of the legacy
+            # global ("filesystem",).  This ensures the agent reads from the
+            # same namespace the API writes to via set_agents_md(user_id=...).
+            routes={"/memories/": StoreBackend(rt, namespace=_user_ns_factory)},
+        )
+
+    return _backend_factory
+
+
 def create_deep_agent(
     *,
     model_name: str | None = None,
     tools: Sequence[BaseTool] | None = None,
     system_prompt: str | None = None,
+    custom_system_prompt: str | None = None,
     assistant_type: str | None = None,
     skills: list[str] | None = None,
     extra_skill_dirs: list[str] | None = None,
     checkpointer: Any | None = None,
     store: Any | None = None,
+    backend: Any | None = None,
     model_kwargs: dict[str, Any] | None = None,
+    subagents: list[dict[str, Any]] | None = None,
+    enable_subagents: bool = True,
+    interrupt_on: dict[str, Any] | list[str] | None = None,
+    response_format: type[BaseModel] | None = None,
 ) -> CompiledStateGraph:  # type: ignore[type-arg]
     """Create a deep agent via the ``deepagents`` package.
 
@@ -216,6 +358,10 @@ def create_deep_agent(
         registered tools if no type is specified.
     system_prompt:
         Explicit system prompt override. Takes precedence over ``assistant_type``.
+    custom_system_prompt:
+        User-provided custom system prompt. Layered on top of (not replacing)
+        the resolved system prompt from skills/assistant_type. Appended after
+        the main prompt.
     assistant_type:
         Agent specialization type (``"researcher"``, ``"coder"``, ``"writer"``,
         or ``"general"``). Determines the system prompt and default tool set.
@@ -235,13 +381,62 @@ def create_deep_agent(
         LangGraph memory store for cross-turn context persistence.
         Defaults to the shared store (``AsyncPostgresStore`` when available,
         otherwise ``InMemoryStore``).
+    backend:
+        Filesystem backend (or factory callable ``(ToolRuntime) -> Backend``)
+        for native filesystem tools. Defaults to a ``CompositeBackend`` with
+        ``StateBackend`` for general files and ``StoreBackend`` for
+        ``/memories/`` paths (persistent cross-thread storage).
     model_kwargs:
         Additional keyword arguments forwarded to the chat model constructor.
+    subagents:
+        Explicit list of subagent configuration dicts to pass to the
+        ``deepagents`` framework.  Each dict should have ``name``,
+        ``model``, ``system_prompt``, and ``tools`` keys.  When ``None``
+        (default) and *enable_subagents* is ``True``, default subagent
+        configs for researcher, coder, and writer are built automatically.
+    enable_subagents:
+        Whether to attach subagent configurations to the supervisor agent.
+        Defaults to ``True``.  Set to ``False`` to create a standalone
+        agent without delegation capabilities (backwards-compatible mode).
+    interrupt_on:
+        Tool names that should trigger a human-in-the-loop interrupt before
+        execution.  Accepts either a list of tool name strings for simple
+        approve/reject, or a dict mapping tool names to interrupt config
+        dicts (e.g. ``{"allowed_decisions": ["approve", "edit", "reject"]}``).
+        When ``None`` (default) no interrupts are configured and the agent
+        runs autonomously.
+    response_format:
+        Optional Pydantic model class for structured output.  When provided,
+        the agent constrains its final response to the given schema and
+        returns the validated instance in ``result["structured_response"]``
+        (via ``ainvoke()``) or in the ``structured_response`` key of the
+        final state update (via ``astream()``).  Use predefined formats from
+        :mod:`app.agents.response_formats` or supply a custom Pydantic class.
+        When ``None`` (default) the agent returns unstructured text as usual.
 
     Returns
     -------
     CompiledStateGraph
         A compiled deep agent ready for streaming invocation.
+
+    Notes
+    -----
+    **Summarization / long-conversation support**
+
+    ``deepagents`` includes ``SummarizationMiddleware`` automatically with
+    model-aware defaults (fraction-based trigger for profiled models).
+    Symphony adds an *explicit* second instance (appended to the middleware
+    stack via the ``middleware`` kwarg) so that:
+
+    * Thresholds are surfaced in application config and logs.
+    * A message-count safety net applies even for models without profile data.
+    * The ``keep`` policy is a predictable "last N messages" (configurable via
+      ``settings.summarization_keep_messages``) rather than a fraction.
+
+    The middleware is positioned *after* the deepagents default, meaning the
+    default model-aware summarisation fires first; the explicit one provides a
+    secondary safety net for cases where the fraction-based trigger does not
+    apply (e.g. custom/unlisted models).
     """
     # Ensure LangSmith tracing env vars are configured
     _configure_langsmith()
@@ -256,6 +451,10 @@ def create_deep_agent(
     else:
         prompt = GENERAL_SYSTEM_PROMPT
 
+    # Layer custom system prompt on top of the resolved prompt
+    if custom_system_prompt:
+        prompt = prompt + "\n\n" + custom_system_prompt
+
     # Resolve tools
     agent_tools = _resolve_tools(tools, assistant_type)
 
@@ -263,21 +462,100 @@ def create_deep_agent(
     skill_paths = resolve_skill_paths(
         skills=skills,
         assistant_type=assistant_type,
-        extra_skill_dirs=extra_skill_dirs,
+        extra_skill_dirs=extra_skill_dirs,  # type: ignore[arg-type]
     )
 
     saver = checkpointer if checkpointer is not None else get_checkpointer()
     memory_store = store if store is not None else get_memory_store()
 
+    # Resolve backend: explicit > default CompositeBackend factory
+    agent_backend = backend if backend is not None else _make_default_backend()
+
+    # Resolve subagent configurations
+    resolved_subagents: list[dict[str, Any]] | None = None
+    if subagents is not None:
+        resolved_subagents = subagents
+    elif enable_subagents:
+        resolved_subagents = build_subagent_configs(
+            model_name=model_name,
+            model_kwargs=model_kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Explicit SummarizationMiddleware configuration
+    # ------------------------------------------------------------------
+    # deepagents already includes SummarizationMiddleware internally with
+    # model-aware defaults.  We build an *additional* explicit instance here
+    # so that our intended thresholds are documented, logged, and tunable via
+    # environment variables without patching deepagents internals.
+    #
+    # Trigger strategy (first condition that fires wins):
+    #   1. Fraction-based (settings.summarization_trigger_fraction, default 0.85)
+    #      → fires for profiled models (GPT-4, Claude, etc.)
+    #      → skipped gracefully if the model has no context-window profile.
+    #   2. Message-count (settings.summarization_trigger_messages, default 200)
+    #      → absolute safety net for models whose context-window size is unknown.
+    #
+    # Keep: last N messages (settings.summarization_keep_messages, default 20)
+    #   Predictable and environment-tunable, unlike a context-window fraction.
+    #
+    # Summary prompt: optional override via settings.summarization_summary_prompt.
+    summ_kwargs: dict[str, Any] = {
+        "model": llm,
+        "backend": StateBackend,
+        "keep": ("messages", settings.summarization_keep_messages),
+    }
+    if settings.summarization_summary_prompt:
+        summ_kwargs["summary_prompt"] = settings.summarization_summary_prompt
+
+    # Prefer dual trigger (fraction + message-count) when the model exposes
+    # profile data.  Fall back to message-count-only if fraction triggers raise
+    # ValueError (model has no context-window profile).
+    try:
+        summarization_mw = SummarizationMiddleware(
+            trigger=[
+                ("fraction", settings.summarization_trigger_fraction),
+                ("messages", settings.summarization_trigger_messages),
+            ],
+            **summ_kwargs,
+        )
+        logger.debug(
+            "SummarizationMiddleware: fraction=%.0f%% + messages=%d trigger, keep=%d msgs",
+            settings.summarization_trigger_fraction * 100,
+            settings.summarization_trigger_messages,
+            settings.summarization_keep_messages,
+        )
+    except ValueError:
+        # Model profile unavailable — fraction trigger not supported; use
+        # message-count-only trigger as a reliable fallback.
+        logger.info(
+            "SummarizationMiddleware: model profile unavailable; "
+            "falling back to message-count trigger=%d, keep=%d msgs",
+            settings.summarization_trigger_messages,
+            settings.summarization_keep_messages,
+        )
+        summarization_mw = SummarizationMiddleware(
+            trigger=("messages", settings.summarization_trigger_messages),
+            **summ_kwargs,
+        )
+
     logger.info(
-        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, "
-        "checkpointer=%s, store=%s",
+        "Creating deep agent: model=%s, type=%s, tools=%d, skills=%d, subagents=%d, "
+        "summarization_trigger=[fraction=%.0f%%, messages=%d], summarization_keep=%d msgs, "
+        "checkpointer=%s, store=%s, backend=%s, sandbox=%s, response_format=%s",
         model_name or settings.default_model,
         assistant_type or "general",
         len(agent_tools),
         len(skill_paths),
+        len(resolved_subagents) if resolved_subagents else 0,
+        settings.summarization_trigger_fraction * 100,
+        settings.summarization_trigger_messages,
+        settings.summarization_keep_messages,
         type(saver).__name__,
         type(memory_store).__name__,
+        "factory" if callable(agent_backend) else type(agent_backend).__name__,
+        settings.sandbox_backend,
+        response_format.__name__ if response_format is not None else None,
     )
 
     create_kwargs: dict[str, Any] = {
@@ -286,11 +564,40 @@ def create_deep_agent(
         "system_prompt": prompt,
         "checkpointer": saver,
         "store": memory_store,
+        "backend": agent_backend,
+        # context_schema=UserContext allows the LangGraph runtime to accept a
+        # UserContext instance at invocation time (passed as
+        # context=UserContext(user_id=...)).  The _user_ns_factory above reads
+        # ctx.runtime.context.user_id to resolve the per-user store namespace
+        # so the agent loads the correct user's AGENTS.md.
+        "context_schema": UserContext,
+        # Load persistent memory from the store-backed /memories/ path.
+        # The CompositeBackend routes /memories/ to StoreBackend so the file
+        # survives across all threads.  The same path is used when seeding
+        # (middleware._seed_agents_md_if_missing) and the API endpoints
+        # (GET/PUT /memory), ensuring agents always see the latest content.
+        "memory": ["/memories/AGENTS.md"],
+        # Explicit summarization middleware appended after deepagents defaults.
+        # See module docstring for rationale.
+        "middleware": [summarization_mw],
     }
 
     # Pass skills to deepagents if any were resolved
     if skill_paths:
         create_kwargs["skills"] = skill_paths
+
+    # Pass subagent configs — the framework automatically provides a `task` tool
+    # to the supervisor agent for delegating work to subagents
+    if resolved_subagents:
+        create_kwargs["subagents"] = resolved_subagents
+
+    # Pass interrupt_on when provided (human-in-the-loop tool approval)
+    if interrupt_on is not None:
+        create_kwargs["interrupt_on"] = interrupt_on
+
+    # Pass response_format when provided (structured output via Pydantic schema)
+    if response_format is not None:
+        create_kwargs["response_format"] = response_format
 
     agent = _deepagents_create(**create_kwargs)
 

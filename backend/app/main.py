@@ -13,10 +13,13 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.middleware import setup_persistent_backends, teardown_persistent_backends
+from app.agents.sandbox import sandbox_manager
 from app.api.routes.assistants import router as assistants_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
+from app.api.routes.memory import router as memory_router
+from app.api.routes.skills import router as skills_router
 from app.api.routes.threads import router as threads_router
 from app.config import settings
 from app.db.session import async_session_factory, engine
@@ -105,6 +108,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # ----- Shutdown -----
     logger.info("Shutting down Symphony API")
     await teardown_persistent_backends()
+    await sandbox_manager.cleanup_all()
     await engine.dispose()
 
 
@@ -168,6 +172,8 @@ app.include_router(auth_router)
 app.include_router(threads_router)
 app.include_router(chat_router)
 app.include_router(assistants_router)
+app.include_router(skills_router)
+app.include_router(memory_router)
 
 
 @app.get("/healthz")

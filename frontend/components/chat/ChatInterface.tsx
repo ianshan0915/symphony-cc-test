@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
 import { UserMenu } from "@/components/UserMenu";
+import { MemoryModal } from "@/components/memory/MemoryModal";
+import { BookOpen } from "lucide-react";
 import type {
   Message,
   ApprovalRequest,
@@ -20,6 +22,7 @@ import type {
   FileOperation,
   SubAgent,
   ThreadDetail,
+  TodoItem,
 } from "@/lib/types";
 import type { AssistantConfig } from "./AssistantSelector";
 
@@ -66,6 +69,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sidebar state
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
+  const [todos, setTodos] = React.useState<TodoItem[]>([]);
   const [fileOps, setFileOps] = React.useState<FileOperation[]>([]);
 
   // Assistant selector state
@@ -74,6 +78,14 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
   // Sub-agent tracking
   const [subAgents, setSubAgents] = React.useState<SubAgent[]>([]);
+  // Accumulates token text per subagent across progress events (keyed by subagent_name/id).
+  // Using a ref so mutations don't trigger re-renders — re-renders are driven by setSubAgents.
+  const subAgentProgressRef = React.useRef<Map<string, string>>(new Map());
+
+  // Memory modal state
+  const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
+  // Badge shown on the memory button when the agent saves new memories.
+  const [memoryUpdated, setMemoryUpdated] = React.useState(false);
 
   // Persist currentThreadId to localStorage whenever it changes
   React.useEffect(() => {
@@ -131,9 +143,11 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       // Reset state for new thread
       setMessages([]);
       setTasks([]);
+      setTodos([]);
       setFileOps([]);
       setSubAgents([]);
       setPendingApproval(null);
+      subAgentProgressRef.current.clear();
       setCurrentThreadId(threadId);
     },
     [currentThreadId]
@@ -143,8 +157,10 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     setCurrentThreadId(null);
     setMessages([]);
     setTasks([]);
+    setTodos([]);
     setFileOps([]);
     setSubAgents([]);
+    subAgentProgressRef.current.clear();
     setPendingApproval(null);
   }, []);
 
@@ -165,6 +181,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
       // Clear sub-agents from previous turn
       setSubAgents([]);
+      subAgentProgressRef.current.clear();
 
       // Build the streaming URL
       const url = new URL(`${config.apiUrl}/chat/stream`);
@@ -241,8 +258,11 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setCurrentThreadId,
                     setPendingApproval,
                     setTasks,
+                    setTodos,
                     setFileOps,
                     setSubAgents,
+                    subAgentProgressMap: subAgentProgressRef.current,
+                    setMemoryUpdated,
                     updateAssistantContent: (newContent: string) => {
                       assistantContent = newContent;
                     },
@@ -282,12 +302,18 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   /**
-   * Handle approval of a pending tool call.
+   * Shared handler for all approval decisions (approve / reject / edit).
+   * Submits the decision to the backend and updates local task/message state.
    */
-  const handleApprove = React.useCallback(
-    async (approvalId: string) => {
+  const handleApprovalDecision = React.useCallback(
+    async (
+      decision: "approve" | "reject" | "edit",
+      options?: { reason?: string; modifiedArgs?: Record<string, unknown> }
+    ) => {
       if (!pendingApproval) return;
       setIsApprovalSubmitting(true);
+
+      const approvalId = pendingApproval.id;
 
       try {
         const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
@@ -295,26 +321,53 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             thread_id: pendingApproval.threadId,
-            decision: "approve",
+            decision,
+            ...(options?.reason !== undefined ? { reason: options.reason } : {}),
+            ...(options?.modifiedArgs !== undefined ? { modified_args: options.modifiedArgs } : {}),
           }),
         });
 
         if (!response.ok) {
-          throw new Error(`Approval failed: ${response.statusText}`);
+          throw new Error(`Approval decision failed: ${response.statusText}`);
         }
 
-        // Update task status
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === approvalId
-              ? { ...t, status: "in_progress" as const }
-              : t
-          )
-        );
+        if (decision === "reject") {
+          // Update task status to failed
+          setTasks((prev) =>
+            prev.map((t) => (t.id === approvalId ? { ...t, status: "failed" as const } : t))
+          );
+          // Mark tool call as rejected in messages
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (!msg.toolCalls) return msg;
+              return {
+                ...msg,
+                toolCalls: msg.toolCalls.map((tc) =>
+                  tc.id === approvalId
+                    ? { ...tc, status: "rejected" as const, result: options?.reason ?? "Rejected by user" }
+                    : tc
+                ),
+              };
+            })
+          );
+        } else {
+          // approve or edit — advance to in_progress, optionally update args
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === approvalId
+                ? {
+                    ...t,
+                    status: "in_progress" as const,
+                    ...(options?.modifiedArgs !== undefined ? { toolArgs: options.modifiedArgs } : {}),
+                  }
+                : t
+            )
+          );
+        }
 
         setPendingApproval(null);
       } catch (error) {
-        console.error("Failed to submit approval:", error);
+        console.error("Failed to submit approval decision:", error);
       } finally {
         setIsApprovalSubmitting(false);
       }
@@ -322,59 +375,20 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     [pendingApproval]
   );
 
-  /**
-   * Handle rejection of a pending tool call.
-   */
+  const handleApprove = React.useCallback(
+    (_approvalId: string) => handleApprovalDecision("approve"),
+    [handleApprovalDecision]
+  );
+
   const handleReject = React.useCallback(
-    async (approvalId: string, reason?: string) => {
-      if (!pendingApproval) return;
-      setIsApprovalSubmitting(true);
+    (_approvalId: string, reason?: string) => handleApprovalDecision("reject", { reason }),
+    [handleApprovalDecision]
+  );
 
-      try {
-        const response = await apiFetch(`${config.apiUrl}/chat/approval`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            thread_id: pendingApproval.threadId,
-            decision: "reject",
-            reason,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Rejection failed: ${response.statusText}`);
-        }
-
-        // Update task status
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === approvalId ? { ...t, status: "failed" as const } : t
-          )
-        );
-
-        // Update tool call status in messages
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (!msg.toolCalls) return msg;
-            return {
-              ...msg,
-              toolCalls: msg.toolCalls.map((tc) =>
-                tc.id === approvalId
-                  ? { ...tc, status: "rejected" as const, result: reason ?? "Rejected by user" }
-                  : tc
-              ),
-            };
-          })
-        );
-
-        setPendingApproval(null);
-      } catch (error) {
-        console.error("Failed to submit rejection:", error);
-      } finally {
-        setIsApprovalSubmitting(false);
-      }
-    },
-    [pendingApproval]
+  const handleEdit = React.useCallback(
+    (_approvalId: string, modifiedArgs: Record<string, unknown>) =>
+      handleApprovalDecision("edit", { modifiedArgs }),
+    [handleApprovalDecision]
   );
 
   return (
@@ -390,7 +404,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       />
 
       {/* Tasks sidebar */}
-      <TasksSidebar tasks={tasks} className="hidden lg:flex" />
+      <TasksSidebar tasks={tasks} todos={todos} className="hidden lg:flex" />
 
       {/* Main chat area */}
       <div className="flex flex-col h-full flex-1 max-w-3xl mx-auto">
@@ -416,6 +430,33 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                 Approval pending
               </span>
             )}
+            {/* Memory button — badge appears when agent saves new memories */}
+            <button
+              type="button"
+              onClick={() => {
+                if (memoryUpdated) setMemoryUpdated(false);
+                setIsMemoryOpen(true);
+              }}
+              title={
+                memoryUpdated
+                  ? "Agent saved new memories — click to view"
+                  : "View and edit agent memory"
+              }
+              aria-label={
+                memoryUpdated
+                  ? "Open agent memory (updated)"
+                  : "Open agent memory"
+              }
+              className="relative flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <BookOpen className="h-4 w-4" />
+              {memoryUpdated && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-1 right-1 h-2 w-2 rounded-full bg-blue-500"
+                />
+              )}
+            </button>
             <UserMenu />
           </div>
         </header>
@@ -447,7 +488,14 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         approval={pendingApproval}
         onApprove={handleApprove}
         onReject={handleReject}
+        onEdit={handleEdit}
         isSubmitting={isApprovalSubmitting}
+      />
+
+      {/* Memory modal */}
+      <MemoryModal
+        open={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
       />
     </div>
   );
@@ -464,11 +512,22 @@ interface SSEHandlers {
     React.SetStateAction<ApprovalRequest | null>
   >;
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
+  setTodos: React.Dispatch<React.SetStateAction<TodoItem[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
+  setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Mutable map used to accumulate token text per subagent across progress events. */
+  subAgentProgressMap: Map<string, string>;
   updateAssistantContent: (content: string) => void;
   updateToolCalls: (calls: Message["toolCalls"]) => void;
 }
+
+/** Static descriptions shown for each known subagent type. */
+const SUBAGENT_DESCRIPTIONS: Record<string, string> = {
+  researcher: "Specialist for web research, data gathering, and source citation.",
+  coder: "Specialist for code generation, review, debugging, and technical implementation.",
+  writer: "Specialist for content writing, editing, and document creation.",
+};
 
 function processSSEEvent(
   event: string,
@@ -695,11 +754,35 @@ function processSSEEvent(
 
     case "message_end": {
       const content = data.content as string;
+      // Runtime guard: only accept plain objects; reject strings, numbers, arrays, null.
+      const rawStructured = data.structured_response;
+      const structuredResponse =
+        rawStructured !== null &&
+        rawStructured !== undefined &&
+        typeof rawStructured === "object" &&
+        !Array.isArray(rawStructured)
+          ? (rawStructured as Record<string, unknown>)
+          : undefined;
       if (content) {
         handlers.updateAssistantContent(content);
         handlers.setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === assistantMsgId ? { ...msg, content } : msg
+            msg.id === assistantMsgId
+              ? {
+                  ...msg,
+                  content,
+                  ...(structuredResponse !== undefined && { structuredResponse }),
+                }
+              : msg
+          )
+        );
+      } else if (structuredResponse !== undefined) {
+        // No text content but there is structured data — still update the message.
+        handlers.setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMsgId
+              ? { ...msg, structuredResponse }
+              : msg
           )
         );
       }
@@ -707,26 +790,71 @@ function processSSEEvent(
     }
 
     case "sub_agent_start": {
+      // Backend V2 emits `subagent_name`; use it as both the stable id and type.
+      const subagentName = (data.subagent_name as string) || (data.agent_name as string) || "";
+      if (!subagentName) break;
+
       const subAgent: SubAgent = {
-        id: (data.agent_id as string) || `sub-${Date.now()}`,
-        name: (data.agent_name as string) || "Sub-Agent",
-        type: (data.agent_type as string) || "unknown",
+        id: subagentName,
+        name: subagentName.charAt(0).toUpperCase() + subagentName.slice(1),
+        type: subagentName,
         status: "running",
-        description: data.description as string | undefined,
+        description:
+          (data.description as string | undefined) ??
+          SUBAGENT_DESCRIPTIONS[subagentName],
         startedAt: new Date().toISOString(),
       };
-      handlers.setSubAgents((prev) => [...prev, subAgent]);
+      // Initialize accumulator for this subagent's token progress text.
+      handlers.subAgentProgressMap.set(subagentName, "");
+      // Deduplicate in case the same agent emits a second start event.
+      handlers.setSubAgents((prev) =>
+        prev.some((a) => a.id === subagentName) ? prev : [...prev, subAgent]
+      );
       break;
     }
 
     case "sub_agent_progress": {
-      const agentId = data.agent_id as string;
-      const progressText = data.progress_text as string;
-      if (agentId) {
+      // Backend V2 emits `subagent_name`; fall back to `agent_id` for compatibility.
+      const subagentName =
+        (data.subagent_name as string) || (data.agent_id as string);
+      if (!subagentName) break;
+
+      const innerEvent = data.inner_event as string | undefined;
+
+      if (innerEvent === "token") {
+        // Accumulate token chunks so the full progress text grows over time.
+        const token = (data.token as string) ?? "";
+        if (token) {
+          const accumulated =
+            (handlers.subAgentProgressMap.get(subagentName) ?? "") + token;
+          handlers.subAgentProgressMap.set(subagentName, accumulated);
+
+          handlers.setSubAgents((prev) =>
+            prev.map((a) =>
+              a.id === subagentName
+                ? { ...a, progressText: accumulated }
+                : a
+            )
+          );
+        }
+      }
+      // tool_call / tool_result inner events are tracked via the main event
+      // stream and do not modify progressText.
+      break;
+    }
+
+    case "sub_agent_end": {
+      // Backend V2 emits `subagent_name`; fall back to `agent_id` for compatibility.
+      // The backend does not send a `status` field — default to "completed".
+      const subagentName =
+        (data.subagent_name as string) || (data.agent_id as string);
+      const status: SubAgent["status"] =
+        (data.status as string) === "error" ? "error" : "completed";
+      if (subagentName) {
         handlers.setSubAgents((prev) =>
           prev.map((a) =>
-            a.id === agentId
-              ? { ...a, progressText: progressText ?? a.progressText }
+            a.id === subagentName
+              ? { ...a, status, completedAt: new Date().toISOString() }
               : a
           )
         );
@@ -734,22 +862,84 @@ function processSSEEvent(
       break;
     }
 
-    case "sub_agent_end": {
-      const agentId = data.agent_id as string;
-      const status = (data.status as string) === "error" ? "error" : "completed";
-      if (agentId) {
-        handlers.setSubAgents((prev) =>
-          prev.map((a) =>
-            a.id === agentId
-              ? {
-                  ...a,
-                  status: status as SubAgent["status"],
-                  completedAt: new Date().toISOString(),
-                }
-              : a
-          )
-        );
+    case "todo_update": {
+      // Agent emits its current planning snapshot via the write_todos tool.
+      // The payload contains a `todos` array that replaces the current list.
+      const rawTodos = data.todos as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(rawTodos)) {
+        const parsedTodos: TodoItem[] = rawTodos.map((t, i) => {
+          const content = String(t.content ?? t.description ?? "");
+          if (process.env.NODE_ENV !== "production" && !content) {
+            console.warn("[todo_update] Todo item at index", i, "has no content:", t);
+          }
+          return {
+            id: String(t.id ?? `todo-${i}`),
+            content,
+            status: (["pending", "in_progress", "completed"].includes(t.status as string)
+              ? t.status
+              : "pending") as TodoItem["status"],
+            priority: (["low", "medium", "high"].includes(t.priority as string)
+              ? t.priority
+              : undefined) as TodoItem["priority"],
+          };
+        });
+        handlers.setTodos(parsedTodos);
       }
+      break;
+    }
+
+    case "execute_result": {
+      // Structured result from the execute tool — backend emits run_id, stdout, stderr, exit_code.
+      const runId = data.run_id as string;
+      const stdout = (data.stdout as string) ?? "";
+      const stderr = (data.stderr as string) ?? "";
+      // Use null as sentinel when exit_code is absent — do NOT default to 0 (success)
+      const exitCode: number | null =
+        data.exit_code != null ? (data.exit_code as number) : null;
+
+      const updatedCalls = currentToolCalls.map((tc) =>
+        tc.id === runId || tc.runId === runId
+          ? {
+              ...tc,
+              status: "completed" as const,
+              execution: {
+                stdout,
+                stderr,
+                exitCode,
+                runId,
+                timestamp: new Date().toISOString(),
+              },
+            }
+          : tc
+      );
+      handlers.updateToolCalls(updatedCalls);
+      handlers.setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMsgId
+            ? { ...msg, toolCalls: updatedCalls }
+            : msg
+        )
+      );
+
+      // Update task to completed
+      handlers.setTasks((prev) =>
+        prev.map((t) =>
+          t.id === runId
+            ? {
+                ...t,
+                status: "completed" as const,
+                result: stdout || stderr || "(no output)",
+                completedAt: new Date().toISOString(),
+              }
+            : t
+        )
+      );
+      break;
+    }
+
+    case "memory_updated": {
+      // Agent saved new memories during this turn — light up the badge.
+      handlers.setMemoryUpdated(true);
       break;
     }
 

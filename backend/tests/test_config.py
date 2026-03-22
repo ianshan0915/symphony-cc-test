@@ -33,6 +33,8 @@ def test_settings_langsmith_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from app.config import Settings
 
-    s = Settings()
+    # Disable .env file loading so the test checks true defaults rather than
+    # values sourced from the on-disk .env file (fixes SYM-61).
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.langsmith_tracing is False
     assert s.langsmith_endpoint == ""

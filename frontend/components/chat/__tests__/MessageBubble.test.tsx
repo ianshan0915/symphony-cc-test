@@ -71,4 +71,107 @@ describe("MessageBubble", () => {
     const timeElements = screen.getAllByText(/\d{1,2}:\d{2}/);
     expect(timeElements.length).toBeGreaterThan(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Structured response rendering
+  // ---------------------------------------------------------------------------
+
+  it("renders StructuredResponseCard when structuredResponse is present", () => {
+    const messageWithStructured: Message = {
+      id: "msg-4",
+      role: "assistant",
+      content: "Here is your result:",
+      structuredResponse: { name: "Alice", score: 95 },
+    };
+
+    render(<MessageBubble message={messageWithStructured} />);
+    expect(screen.getByTestId("structured-response-card")).toBeInTheDocument();
+  });
+
+  it("renders structured response field values", () => {
+    const messageWithStructured: Message = {
+      id: "msg-5",
+      role: "assistant",
+      content: "Result:",
+      structuredResponse: { city: "Tokyo", population: 13960000 },
+    };
+
+    render(<MessageBubble message={messageWithStructured} />);
+    expect(screen.getByText("City")).toBeInTheDocument();
+    expect(screen.getByText("Tokyo")).toBeInTheDocument();
+  });
+
+  it("does not render StructuredResponseCard when structuredResponse is absent", () => {
+    render(<MessageBubble message={assistantMessage} />);
+    expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
+  });
+
+  it("renders both message content and structured response when both are present", () => {
+    const messageWithBoth: Message = {
+      id: "msg-6",
+      role: "assistant",
+      content: "Here is the weather:",
+      structuredResponse: { temperature: 22, unit: "Celsius" },
+    };
+
+    render(<MessageBubble message={messageWithBoth} />);
+    // The text content should still appear
+    expect(screen.getByText(/Here is the weather/)).toBeInTheDocument();
+    // And the structured card should also be present
+    expect(screen.getByTestId("structured-response-card")).toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // CodeExecutionCard routing
+  // ---------------------------------------------------------------------------
+
+  it("renders a CodeExecutionCard for an execute tool call", () => {
+    const messageWithExecute: Message = {
+      id: "msg-exec",
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "tc-exec",
+          name: "execute",
+          args: { command: "ls -la" },
+          status: "completed",
+          execution: {
+            stdout: "total 0\n",
+            stderr: "",
+            exitCode: 0,
+          },
+        },
+      ],
+    };
+
+    render(<MessageBubble message={messageWithExecute} />);
+    // CodeExecutionCard sets this test id on its root element
+    expect(screen.getByTestId("code-execution-card")).toBeInTheDocument();
+    // Generic ToolCallCard should NOT be rendered for execute tool calls
+    expect(screen.queryByTestId("tool-call-card")).not.toBeInTheDocument();
+  });
+
+  it("renders a generic ToolCallCard for non-execute tool calls", () => {
+    const messageWithTool: Message = {
+      id: "msg-tool",
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "tc-search",
+          name: "web_search",
+          args: { query: "hello" },
+          status: "completed",
+          result: "Some results",
+        },
+      ],
+    };
+
+    render(<MessageBubble message={messageWithTool} />);
+    // CodeExecutionCard must NOT be rendered for non-execute tools
+    expect(screen.queryByTestId("code-execution-card")).not.toBeInTheDocument();
+    // ToolCallCard renders the tool name in its header
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+  });
 });

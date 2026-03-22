@@ -6,7 +6,18 @@ import remarkGfm from "remark-gfm";
 import { User, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToolCallCard } from "./ToolCallCard";
-import type { Message } from "@/lib/types";
+import { StructuredResponseCard } from "./StructuredResponseCard";
+import { CodeExecutionCard } from "./CodeExecutionCard";
+import type { Message, ToolCall } from "@/lib/types";
+
+/** Returns true when a tool call should be rendered as a CodeExecutionCard. */
+function isExecuteToolCall(toolCall: ToolCall): boolean {
+  // Only route tool calls explicitly named "execute" to the terminal card.
+  // Checking the name is sufficient — the SSE handler only ever attaches
+  // `execution` data to the matching execute tool call, so the name check
+  // avoids accidentally rendering unrelated tool calls as CodeExecutionCards.
+  return toolCall.name === "execute";
+}
 
 export interface MessageBubbleProps {
   /** The message to display */
@@ -69,12 +80,24 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
           </div>
         )}
 
+        {/* Structured response — shown below text content when present */}
+        {message.structuredResponse && (
+          <StructuredResponseCard
+            data={message.structuredResponse}
+            className="w-full"
+          />
+        )}
+
         {/* Tool calls — shown below the message content */}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <div className="flex flex-col gap-2 w-full">
-            {message.toolCalls.map((toolCall) => (
-              <ToolCallCard key={toolCall.id} toolCall={toolCall} />
-            ))}
+            {message.toolCalls.map((toolCall) =>
+              isExecuteToolCall(toolCall) ? (
+                <CodeExecutionCard key={toolCall.id} toolCall={toolCall} />
+              ) : (
+                <ToolCallCard key={toolCall.id} toolCall={toolCall} />
+              )
+            )}
           </div>
         )}
 

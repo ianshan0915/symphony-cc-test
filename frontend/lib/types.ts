@@ -11,6 +11,8 @@ export interface ToolCall {
   status?: "pending" | "running" | "completed" | "error" | "awaiting_approval" | "rejected";
   /** LangGraph run_id — used to correlate tool_result events for approval-required tools */
   runId?: string;
+  /** Structured execution result — populated for execute tool calls via execute_result SSE event */
+  execution?: CodeExecution;
 }
 
 /** A chat message */
@@ -20,6 +22,8 @@ export interface Message {
   content: string;
   toolCalls?: ToolCall[];
   createdAt?: string;
+  /** Structured response data from the backend `response_format` feature */
+  structuredResponse?: Record<string, unknown>;
 }
 
 /** Approval request sent by the backend when a sensitive tool call needs user confirmation */
@@ -44,10 +48,12 @@ export interface ApprovalDecision {
   approvalId: string;
   /** Thread ID */
   threadId: string;
-  /** Whether the user approved or rejected */
-  decision: "approve" | "reject";
+  /** Whether the user approved, rejected, or edited */
+  decision: "approve" | "reject" | "edit";
   /** Optional reason for rejection */
   reason?: string;
+  /** Modified tool arguments when decision is "edit" */
+  modifiedArgs?: Record<string, unknown>;
 }
 
 /** A task tracked by the agent */
@@ -63,17 +69,24 @@ export interface AgentTask {
   completedAt?: string;
 }
 
+/** Brief skill info embedded in assistant configuration */
+export interface SkillBrief {
+  id: string;
+  name: string;
+  description: string;
+}
+
 /** Assistant configuration (mirrors backend AssistantOut) */
 export interface AssistantConfig {
   id: string;
+  user_id?: string | null;
   name: string;
   description: string | null;
   model: string;
   system_prompt: string | null;
   tools_enabled: string[];
   metadata: Record<string, unknown>;
-  temperature: number | null;
-  max_tokens: number | null;
+  skills: SkillBrief[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -115,6 +128,48 @@ export interface ThreadMessage {
   tool_calls?: Record<string, unknown> | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+/** Response from GET /memory and PUT /memory */
+export interface MemoryResponse {
+  /** Current AGENTS.md Markdown content */
+  content: string;
+}
+
+/**
+ * A structured todo item from the agent's planning tool (write_todos).
+ * The agent emits `todo_update` SSE events with the current snapshot of todos.
+ */
+export interface TodoItem {
+  /** Stable identifier for this todo */
+  id: string;
+  /** Human-readable description of the task */
+  content: string;
+  /** Current execution status */
+  status: "pending" | "in_progress" | "completed";
+  /** Optional priority hint from the agent */
+  priority?: "low" | "medium" | "high";
+}
+
+/**
+ * Structured result from a code execution (execute tool).
+ * Populated by the `execute_result` SSE event emitted by the backend.
+ */
+export interface CodeExecution {
+  /** Standard output from the executed command */
+  stdout: string;
+  /** Standard error output from the executed command */
+  stderr: string;
+  /**
+   * Process exit code — 0 means success, non-zero means failure.
+   * `null` means the exit code was not provided (e.g. a partial/error payload).
+   * Callers must not treat `null` as success.
+   */
+  exitCode: number | null;
+  /** Backend run_id used to correlate with the originating tool call */
+  runId?: string;
+  /** ISO timestamp of when the execution completed */
+  timestamp?: string;
 }
 
 /** A file operation tracked by the agent */
