@@ -11,6 +11,8 @@ export interface ToolCall {
   status?: "pending" | "running" | "completed" | "error" | "awaiting_approval" | "rejected";
   /** LangGraph run_id — used to correlate tool_result events for approval-required tools */
   runId?: string;
+  /** Structured execution result — populated for execute tool calls via execute_result SSE event */
+  execution?: CodeExecution;
 }
 
 /** A chat message */
@@ -147,6 +149,23 @@ export interface TodoItem {
   status: "pending" | "in_progress" | "completed";
   /** Optional priority hint from the agent */
   priority?: "low" | "medium" | "high";
+}
+
+/**
+ * Structured result from a code execution (execute tool).
+ * Populated by the `execute_result` SSE event emitted by the backend.
+ */
+export interface CodeExecution {
+  /** Standard output from the executed command */
+  stdout: string;
+  /** Standard error output from the executed command */
+  stderr: string;
+  /** Process exit code — 0 typically means success */
+  exitCode: number;
+  /** Backend run_id used to correlate with the originating tool call */
+  runId?: string;
+  /** ISO timestamp of when the execution completed */
+  timestamp?: string;
 }
 
 /** A file operation tracked by the agent */

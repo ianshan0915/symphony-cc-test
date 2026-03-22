@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { ChatInterface } from "../ChatInterface";
@@ -537,5 +537,149 @@ describe("ChatInterface structured_response in message_end", () => {
       expect(screen.getByText("Done")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execute_result SSE integration tests
+// ---------------------------------------------------------------------------
+
+describe("ChatInterface execute_result SSE events", () => {
+  it("displays a CodeExecutionCard for an execute tool call", async () => {
+    // tool_call followed by execute_result with stdout
+    const toolCallPayload = JSON.stringify({
+      tool_name: "execute",
+      tool_input: { command: "echo hi" },
+      run_id: "run-exec-1",
+    });
+    const execResultPayload = JSON.stringify({
+      run_id: "run-exec-1",
+      stdout: "hi\n",
+      stderr: "",
+      exit_code: 0,
+    });
+
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      `event: tool_call\ndata: ${toolCallPayload}\n\n` +
+      `event: execute_result\ndata: ${execResultPayload}\n\n` +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Run a command{Enter}");
+
+    await waitFor(() => {
+      // CodeExecutionCard renders the tool name in its header
+      expect(screen.getByTestId("code-execution-card")).toBeInTheDocument();
+    });
+  });
+
+  it("shows stdout output after execute_result event", async () => {
+    const toolCallPayload = JSON.stringify({
+      tool_name: "execute",
+      tool_input: { command: "echo hello world" },
+      run_id: "run-exec-2",
+    });
+    const execResultPayload = JSON.stringify({
+      run_id: "run-exec-2",
+      stdout: "hello world\n",
+      stderr: "",
+      exit_code: 0,
+    });
+
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      `event: tool_call\ndata: ${toolCallPayload}\n\n` +
+      `event: execute_result\ndata: ${execResultPayload}\n\n` +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Run echo{Enter}");
+
+    await waitFor(() => {
+      // Scope query to the stdout-section to avoid matching the tool args display.
+      const stdoutSection = screen.getByTestId("stdout-section");
+      expect(
+        within(stdoutSection).getByText((content) =>
+          content.includes("hello world")
+        )
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows a success exit-code badge (exit 0) after execute_result", async () => {
+    const toolCallPayload = JSON.stringify({
+      tool_name: "execute",
+      tool_input: { command: "true" },
+      run_id: "run-exec-3",
+    });
+    const execResultPayload = JSON.stringify({
+      run_id: "run-exec-3",
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+    });
+
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      `event: tool_call\ndata: ${toolCallPayload}\n\n` +
+      `event: execute_result\ndata: ${execResultPayload}\n\n` +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Exit zero{Enter}");
+
+    await waitFor(() => {
+      const badge = screen.getByTestId("exit-code-badge");
+      expect(badge).toHaveTextContent("exit 0");
+    });
+  });
+
+  it("shows a failure exit-code badge for non-zero exit code", async () => {
+    const toolCallPayload = JSON.stringify({
+      tool_name: "execute",
+      tool_input: { command: "false" },
+      run_id: "run-exec-4",
+    });
+    const execResultPayload = JSON.stringify({
+      run_id: "run-exec-4",
+      stdout: "",
+      stderr: "command failed\n",
+      exit_code: 1,
+    });
+
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      `event: tool_call\ndata: ${toolCallPayload}\n\n` +
+      `event: execute_result\ndata: ${execResultPayload}\n\n` +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Exit one{Enter}");
+
+    await waitFor(() => {
+      const badge = screen.getByTestId("exit-code-badge");
+      expect(badge).toHaveTextContent("exit 1");
+    });
   });
 });
