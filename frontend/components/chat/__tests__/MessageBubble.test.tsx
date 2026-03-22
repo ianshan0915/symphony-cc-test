@@ -120,4 +120,58 @@ describe("MessageBubble", () => {
     // And the structured card should also be present
     expect(screen.getByTestId("structured-response-card")).toBeInTheDocument();
   });
+
+  // ---------------------------------------------------------------------------
+  // CodeExecutionCard routing
+  // ---------------------------------------------------------------------------
+
+  it("renders a CodeExecutionCard for an execute tool call", () => {
+    const messageWithExecute: Message = {
+      id: "msg-exec",
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "tc-exec",
+          name: "execute",
+          args: { command: "ls -la" },
+          status: "completed",
+          execution: {
+            stdout: "total 0\n",
+            stderr: "",
+            exitCode: 0,
+          },
+        },
+      ],
+    };
+
+    render(<MessageBubble message={messageWithExecute} />);
+    // CodeExecutionCard sets this test id on its root element
+    expect(screen.getByTestId("code-execution-card")).toBeInTheDocument();
+    // Generic ToolCallCard should NOT be rendered for execute tool calls
+    expect(screen.queryByTestId("tool-call-card")).not.toBeInTheDocument();
+  });
+
+  it("renders a generic ToolCallCard for non-execute tool calls", () => {
+    const messageWithTool: Message = {
+      id: "msg-tool",
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        {
+          id: "tc-search",
+          name: "web_search",
+          args: { query: "hello" },
+          status: "completed",
+          result: "Some results",
+        },
+      ],
+    };
+
+    render(<MessageBubble message={messageWithTool} />);
+    // CodeExecutionCard must NOT be rendered for non-execute tools
+    expect(screen.queryByTestId("code-execution-card")).not.toBeInTheDocument();
+    // ToolCallCard renders the tool name in its header
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+  });
 });
