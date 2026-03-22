@@ -23,13 +23,107 @@ export interface CodeExecutionCardProps {
 /** Maximum characters shown before the output section becomes scrollable */
 const OUTPUT_COLLAPSE_THRESHOLD = 500;
 
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/** Config that drives the exit-code badge appearance. */
+interface ExitBadgeConfig {
+  Icon: React.ElementType;
+  label: string;
+  ariaLabel: string;
+  colorClass: string;
+}
+
+function getExitBadgeConfig(exitCode: number | null): ExitBadgeConfig {
+  if (exitCode === null) {
+    return {
+      Icon: HelpCircle,
+      label: "exit ?",
+      ariaLabel: "Exit code unknown",
+      colorClass: "bg-zinc-800 text-zinc-400",
+    };
+  }
+  if (exitCode === 0) {
+    return {
+      Icon: CheckCircle2,
+      label: `exit ${exitCode}`,
+      ariaLabel: `Exit code ${exitCode}`,
+      colorClass: "bg-green-900/60 text-green-400",
+    };
+  }
+  return {
+    Icon: XCircle,
+    label: `exit ${exitCode}`,
+    ariaLabel: `Exit code ${exitCode}`,
+    colorClass: "bg-red-900/60 text-red-400",
+  };
+}
+
+interface OutputSectionProps {
+  /** Data-testid applied to the wrapper div */
+  testId: string;
+  /** Section label (e.g. "stdout" / "stderr") */
+  label: string;
+  /** Tailwind colour class for the label text */
+  labelColor: string;
+  /** Tailwind colour class for the output text */
+  textColor: string;
+  /** Whether to render a top border (used when stdout precedes stderr) */
+  hasBorderTop: boolean;
+  /** Whether to constrain height and enable scrolling */
+  isLong: boolean;
+  /** The raw text to display */
+  children: string;
+}
+
+/** Shared layout for stdout and stderr output blocks. */
+function OutputSection({
+  testId,
+  label,
+  labelColor,
+  textColor,
+  hasBorderTop,
+  isLong,
+  children,
+}: OutputSectionProps) {
+  return (
+    <div
+      data-testid={testId}
+      className={hasBorderTop ? "border-t border-zinc-800" : undefined}
+    >
+      <p
+        className={cn(
+          "px-3 pt-2 text-[10px] font-sans font-medium uppercase tracking-wider",
+          labelColor
+        )}
+      >
+        {label}
+      </p>
+      <pre
+        className={cn(
+          "px-3 py-2 text-xs whitespace-pre-wrap break-all overflow-x-auto",
+          textColor,
+          isLong && "max-h-[300px] overflow-y-auto custom-scrollbar"
+        )}
+      >
+        {children}
+      </pre>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 /**
  * CodeExecutionCard — displays code execution results in a terminal-like style.
  *
  * Features:
  * - Dark terminal background with monospace font
  * - stdout and stderr displayed in separate sections (stderr in red)
- * - Exit code badge with success (green) / failure (red) indicator
+ * - Exit code badge with success (green) / failure (red) / unknown (zinc) indicator
  * - Collapsible output for long content
  * - Spinner while the execution is still running
  */
@@ -61,8 +155,7 @@ export function CodeExecutionCard({
     }
   }, [execution, isLongOutput]);
 
-  const exitSuccess = execution && execution.exitCode === 0;
-  const exitUnknown = execution && execution.exitCode === null;
+  const exitBadge = execution != null ? getExitBadgeConfig(execution.exitCode) : null;
 
   return (
     <div
@@ -91,29 +184,17 @@ export function CodeExecutionCard({
             className="h-3.5 w-3.5 shrink-0 text-zinc-400 animate-spin"
             aria-label="Running"
           />
-        ) : execution != null ? (
+        ) : exitBadge != null ? (
           <span
             className={cn(
               "inline-flex items-center gap-1 text-[10px] font-sans font-medium rounded px-1.5 py-0.5 shrink-0",
-              exitUnknown
-                ? "bg-zinc-800 text-zinc-400"
-                : exitSuccess
-                  ? "bg-green-900/60 text-green-400"
-                  : "bg-red-900/60 text-red-400"
+              exitBadge.colorClass
             )}
-            aria-label={
-              exitUnknown ? "Exit code unknown" : `Exit code ${execution.exitCode}`
-            }
+            aria-label={exitBadge.ariaLabel}
             data-testid="exit-code-badge"
           >
-            {exitUnknown ? (
-              <HelpCircle className="h-3 w-3" />
-            ) : exitSuccess ? (
-              <CheckCircle2 className="h-3 w-3" />
-            ) : (
-              <XCircle className="h-3 w-3" />
-            )}
-            {exitUnknown ? "exit ?" : `exit ${execution.exitCode}`}
+            <exitBadge.Icon className="h-3 w-3" />
+            {exitBadge.label}
           </span>
         ) : null}
 
@@ -129,61 +210,42 @@ export function CodeExecutionCard({
       {isExpanded && (
         <div className="bg-zinc-950 border-t border-zinc-800">
           {isRunning && !execution && (
-            <p className="px-3 py-2 text-xs text-zinc-400 italic">
-              Running…
-            </p>
+            <p className="px-3 py-2 text-xs text-zinc-400 italic">Running…</p>
           )}
 
           {execution && (
             <>
-              {/* stdout */}
               {execution.stdout.length > 0 && (
-                <div data-testid="stdout-section">
-                  <p className="px-3 pt-2 text-[10px] font-sans font-medium uppercase tracking-wider text-zinc-500">
-                    stdout
-                  </p>
-                  <pre
-                    className={cn(
-                      "px-3 py-2 text-xs text-zinc-100 whitespace-pre-wrap break-all overflow-x-auto",
-                      isLongOutput && "max-h-[300px] overflow-y-auto custom-scrollbar"
-                    )}
-                  >
-                    {execution.stdout}
-                  </pre>
-                </div>
-              )}
-
-              {/* stderr */}
-              {execution.stderr.length > 0 && (
-                <div
-                  data-testid="stderr-section"
-                  className={
-                    execution.stdout.length > 0
-                      ? "border-t border-zinc-800"
-                      : undefined
-                  }
+                <OutputSection
+                  testId="stdout-section"
+                  label="stdout"
+                  labelColor="text-zinc-500"
+                  textColor="text-zinc-100"
+                  hasBorderTop={false}
+                  isLong={!!isLongOutput}
                 >
-                  <p className="px-3 pt-2 text-[10px] font-sans font-medium uppercase tracking-wider text-red-500">
-                    stderr
-                  </p>
-                  <pre
-                    className={cn(
-                      "px-3 py-2 text-xs text-red-300 whitespace-pre-wrap break-all overflow-x-auto",
-                      isLongOutput && "max-h-[300px] overflow-y-auto custom-scrollbar"
-                    )}
-                  >
-                    {execution.stderr}
-                  </pre>
-                </div>
+                  {execution.stdout}
+                </OutputSection>
               )}
 
-              {/* No output at all */}
-              {execution.stdout.length === 0 &&
-                execution.stderr.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-zinc-500 italic">
-                    (no output)
-                  </p>
-                )}
+              {execution.stderr.length > 0 && (
+                <OutputSection
+                  testId="stderr-section"
+                  label="stderr"
+                  labelColor="text-red-500"
+                  textColor="text-red-300"
+                  hasBorderTop={execution.stdout.length > 0}
+                  isLong={!!isLongOutput}
+                >
+                  {execution.stderr}
+                </OutputSection>
+              )}
+
+              {execution.stdout.length === 0 && execution.stderr.length === 0 && (
+                <p className="px-3 py-2 text-xs text-zinc-500 italic">
+                  (no output)
+                </p>
+              )}
             </>
           )}
         </div>
