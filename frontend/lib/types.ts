@@ -20,6 +20,8 @@ export interface Message {
   content: string;
   toolCalls?: ToolCall[];
   createdAt?: string;
+  /** Structured response data from the backend `response_format` feature */
+  structuredResponse?: Record<string, unknown>;
 }
 
 /** Approval request sent by the backend when a sensitive tool call needs user confirmation */

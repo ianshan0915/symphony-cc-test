@@ -754,11 +754,27 @@ function processSSEEvent(
 
     case "message_end": {
       const content = data.content as string;
+      const structuredResponse = data.structured_response as Record<string, unknown> | undefined;
       if (content) {
         handlers.updateAssistantContent(content);
         handlers.setMessages((prev) =>
           prev.map((msg) =>
-            msg.id === assistantMsgId ? { ...msg, content } : msg
+            msg.id === assistantMsgId
+              ? {
+                  ...msg,
+                  content,
+                  ...(structuredResponse !== undefined && { structuredResponse }),
+                }
+              : msg
+          )
+        );
+      } else if (structuredResponse !== undefined) {
+        // No text content but there is structured data — still update the message.
+        handlers.setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMsgId
+              ? { ...msg, structuredResponse }
+              : msg
           )
         );
       }

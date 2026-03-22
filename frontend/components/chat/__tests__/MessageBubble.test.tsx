@@ -71,4 +71,53 @@ describe("MessageBubble", () => {
     const timeElements = screen.getAllByText(/\d{1,2}:\d{2}/);
     expect(timeElements.length).toBeGreaterThan(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Structured response rendering
+  // ---------------------------------------------------------------------------
+
+  it("renders StructuredResponseCard when structuredResponse is present", () => {
+    const messageWithStructured: Message = {
+      id: "msg-4",
+      role: "assistant",
+      content: "Here is your result:",
+      structuredResponse: { name: "Alice", score: 95 },
+    };
+
+    render(<MessageBubble message={messageWithStructured} />);
+    expect(screen.getByTestId("structured-response-card")).toBeInTheDocument();
+  });
+
+  it("renders structured response field values", () => {
+    const messageWithStructured: Message = {
+      id: "msg-5",
+      role: "assistant",
+      content: "Result:",
+      structuredResponse: { city: "Tokyo", population: 13960000 },
+    };
+
+    render(<MessageBubble message={messageWithStructured} />);
+    expect(screen.getByText("City")).toBeInTheDocument();
+    expect(screen.getByText("Tokyo")).toBeInTheDocument();
+  });
+
+  it("does not render StructuredResponseCard when structuredResponse is absent", () => {
+    render(<MessageBubble message={assistantMessage} />);
+    expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
+  });
+
+  it("renders both message content and structured response when both are present", () => {
+    const messageWithBoth: Message = {
+      id: "msg-6",
+      role: "assistant",
+      content: "Here is the weather:",
+      structuredResponse: { temperature: 22, unit: "Celsius" },
+    };
+
+    render(<MessageBubble message={messageWithBoth} />);
+    // The text content should still appear
+    expect(screen.getByText(/Here is the weather/)).toBeInTheDocument();
+    // And the structured card should also be present
+    expect(screen.getByTestId("structured-response-card")).toBeInTheDocument();
+  });
 });
