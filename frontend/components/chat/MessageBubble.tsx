@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { User, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToolCallCard } from "./ToolCallCard";
+import { StructuredResponseCard } from "./StructuredResponseCard";
 import type { Message } from "@/lib/types";
 
 export interface MessageBubbleProps {
@@ -67,6 +68,14 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
               <p className="whitespace-pre-wrap break-words">{message.content}</p>
             )}
           </div>
+        )}
+
+        {/* Structured response — shown below text content when present */}
+        {message.structuredResponse && (
+          <StructuredResponseCard
+            data={message.structuredResponse}
+            className="w-full"
+          />
         )}
 
         {/* Tool calls — shown below the message content */}
