@@ -47,9 +47,6 @@ export function CodeExecutionCard({
   const status = toolCall.status ?? "completed";
   const isRunning = status === "running" || status === "pending";
 
-  const hasOutput =
-    execution &&
-    (execution.stdout.length > 0 || execution.stderr.length > 0);
   const isLongOutput =
     execution &&
     (execution.stdout.length + execution.stderr.length >
