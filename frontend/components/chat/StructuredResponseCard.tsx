@@ -3,16 +3,21 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+// Maximum recursion depth before falling back to raw JSON display.
+const MAX_DEPTH = 8;
+
 // ---------------------------------------------------------------------------
 // Helpers — field-type detection and formatting
 // ---------------------------------------------------------------------------
 
-/** Returns true if the string looks like an ISO-8601 / RFC-2822 date. */
+/**
+ * Returns true if the string looks like an ISO-8601 date or datetime.
+ * Only accepts strings of the form YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS…
+ * to avoid false positives from partial dates, version strings, etc.
+ */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+\-]+)?$/;
 function looksLikeDate(value: string): boolean {
-  // Must not be a plain number string; must parse as a real date.
-  if (/^\d+$/.test(value)) return false;
-  const d = Date.parse(value);
-  return !isNaN(d);
+  return ISO_DATE_RE.test(value) && !isNaN(Date.parse(value));
 }
 
 /** Returns true if the string looks like an absolute URL. */
@@ -55,7 +60,7 @@ function formatPrimitive(value: unknown): React.ReactNode {
     // Preserve decimals; use locale formatting for thousands separator
     const formatted = Number.isInteger(value)
       ? value.toLocaleString()
-      : value.toLocaleString(undefined, { maximumFractionDigits: 10 });
+      : value.toLocaleString(undefined, { maximumFractionDigits: 6 });
     return <span className="font-mono text-xs">{formatted}</span>;
   }
   if (typeof value === "string") {
@@ -112,11 +117,20 @@ interface FieldValueProps {
  * Recursively render a field value.
  * - Primitives → `formatPrimitive`
  * - Arrays → bulleted list; objects inside arrays get nested cards
- * - Objects → nested key-value table (up to reasonable depth)
+ * - Objects → nested key-value table (up to MAX_DEPTH)
  */
 function FieldValue({ value, depth = 0 }: FieldValueProps) {
   if (value === null || value === undefined || typeof value !== "object") {
     return <>{formatPrimitive(value)}</>;
+  }
+
+  // Depth cap: fall back to raw JSON to avoid stack overflow on deep nesting.
+  if (depth >= MAX_DEPTH) {
+    return (
+      <pre className="font-mono text-xs whitespace-pre-wrap break-all">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
   }
 
   if (Array.isArray(value)) {
@@ -150,7 +164,7 @@ interface StructuredTableProps {
 function StructuredTable({ data, depth = 0 }: StructuredTableProps) {
   const entries = Object.entries(data);
   if (entries.length === 0) {
-    return <span className="text-muted-foreground text-xs">{ }</span>;
+    return <span className="text-muted-foreground text-xs">(empty)</span>;
   }
 
   return (
@@ -159,7 +173,8 @@ function StructuredTable({ data, depth = 0 }: StructuredTableProps) {
         "w-full text-sm border-collapse",
         depth > 0 && "mt-1"
       )}
-      data-testid="structured-table"
+      // Only attach testid at root depth to avoid duplicate testid issues in queries
+      {...(depth === 0 ? { "data-testid": "structured-table" } : {})}
     >
       <tbody>
         {entries.map(([key, val]) => {
@@ -203,7 +218,7 @@ export interface StructuredResponseCardProps {
  *
  * Rendering rules:
  * - Flat objects → key-value table
- * - Nested objects → nested key-value tables (recursive)
+ * - Nested objects → nested key-value tables (recursive, capped at MAX_DEPTH)
  * - Arrays → bulleted list
  * - Field types: numbers (locale-formatted), dates (human-readable),
  *   URLs (clickable), booleans (Yes/No badge), null (em-dash)

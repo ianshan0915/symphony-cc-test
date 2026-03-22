@@ -754,7 +754,15 @@ function processSSEEvent(
 
     case "message_end": {
       const content = data.content as string;
-      const structuredResponse = data.structured_response as Record<string, unknown> | undefined;
+      // Runtime guard: only accept plain objects; reject strings, numbers, arrays, null.
+      const rawStructured = data.structured_response;
+      const structuredResponse =
+        rawStructured !== null &&
+        rawStructured !== undefined &&
+        typeof rawStructured === "object" &&
+        !Array.isArray(rawStructured)
+          ? (rawStructured as Record<string, unknown>)
+          : undefined;
       if (content) {
         handlers.updateAssistantContent(content);
         handlers.setMessages((prev) =>

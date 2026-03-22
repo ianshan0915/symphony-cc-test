@@ -68,6 +68,12 @@ describe("StructuredResponseCard", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
+  it("renders URL links with rel=noopener noreferrer for security", () => {
+    render(<StructuredResponseCard data={{ homepage: "https://example.com" }} />);
+    const link = screen.getByRole("link", { name: "https://example.com" });
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("does not render non-URL strings as links", () => {
     render(<StructuredResponseCard data={{ description: "just a string" }} />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
@@ -79,11 +85,22 @@ describe("StructuredResponseCard", () => {
 
   it("renders ISO date strings in human-readable form", () => {
     render(<StructuredResponseCard data={{ created_at: "2025-06-15T14:30:00Z" }} />);
-    // Should render something date-like; exact format is locale-dependent
-    // Just verify the raw ISO string is NOT shown verbatim as visible text
-    // but some formatted date text is rendered (the <span title={value}>)
+    // Verify the raw ISO string is exposed via title attribute on the span
     const span = document.querySelector('[title="2025-06-15T14:30:00Z"]');
     expect(span).toBeInTheDocument();
+  });
+
+  it("does not render a plain year string as a date", () => {
+    render(<StructuredResponseCard data={{ value: "2024" }} />);
+    // Should render as plain text, not trigger date formatting (no title attribute)
+    expect(document.querySelector('[title="2024"]')).not.toBeInTheDocument();
+    expect(screen.getByText("2024")).toBeInTheDocument();
+  });
+
+  it("does not render a partial date string like '2025-06' as a date", () => {
+    render(<StructuredResponseCard data={{ version: "2025-06" }} />);
+    // Should NOT have a date title attribute — the ISO_DATE_RE requires YYYY-MM-DD
+    expect(document.querySelector('[title="2025-06"]')).not.toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------
@@ -100,6 +117,26 @@ describe("StructuredResponseCard", () => {
     expect(screen.getByText("Paris")).toBeInTheDocument();
     expect(screen.getByText("Country")).toBeInTheDocument();
     expect(screen.getByText("France")).toBeInTheDocument();
+  });
+
+  it("renders empty nested object with placeholder", () => {
+    render(<StructuredResponseCard data={{ metadata: {} }} />);
+    expect(screen.getByText("(empty)")).toBeInTheDocument();
+  });
+
+  it("falls back to JSON for deeply nested structures beyond MAX_DEPTH", () => {
+    // Build an object nested 10 levels deep (exceeds MAX_DEPTH of 8)
+    let deep: Record<string, unknown> = { leaf: "value" };
+    for (let i = 0; i < 10; i++) {
+      deep = { nested: deep };
+    }
+    render(<StructuredResponseCard data={deep} />);
+    // The deeply nested content should eventually hit the depth cap and render as <pre>
+    const card = screen.getByTestId("structured-response-card");
+    expect(card).toBeInTheDocument();
+    // At some nesting level there should be a <pre> fallback
+    const pre = card.querySelector("pre");
+    expect(pre).toBeInTheDocument();
   });
 
   // ---------------------------------------------------------------------------

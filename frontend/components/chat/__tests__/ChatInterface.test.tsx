@@ -499,4 +499,43 @@ describe("ChatInterface structured_response in message_end", () => {
     });
     expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
   });
+
+  it("does not render StructuredResponseCard when structured_response is a non-object (runtime guard)", async () => {
+    // Backend sends a string instead of an object — the runtime guard should reject it.
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"structured_response\":\"not an object\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Do something{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("Done")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
+  });
+
+  it("does not render StructuredResponseCard when structured_response is an array (runtime guard)", async () => {
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"structured_response\":[1,2,3],\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Do something{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByText("Done")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("structured-response-card")).not.toBeInTheDocument();
+  });
 });
