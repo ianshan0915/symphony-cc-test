@@ -7,6 +7,7 @@ export {
   StructuredResponseCard,
   type StructuredResponseCardProps,
 } from "./StructuredResponseCard";
+export { CodeExecutionCard, type CodeExecutionCardProps } from "./CodeExecutionCard";
 export { ApprovalDialog, type ApprovalDialogProps } from "./ApprovalDialog";
 export {
   AssistantSelector,

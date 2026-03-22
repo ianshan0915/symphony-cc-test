@@ -888,6 +888,55 @@ function processSSEEvent(
       break;
     }
 
+    case "execute_result": {
+      // Structured result from the execute tool — backend emits run_id, stdout, stderr, exit_code.
+      const runId = data.run_id as string;
+      const stdout = (data.stdout as string) ?? "";
+      const stderr = (data.stderr as string) ?? "";
+      // Use null as sentinel when exit_code is absent — do NOT default to 0 (success)
+      const exitCode: number | null =
+        data.exit_code != null ? (data.exit_code as number) : null;
+
+      const updatedCalls = currentToolCalls.map((tc) =>
+        tc.id === runId || tc.runId === runId
+          ? {
+              ...tc,
+              status: "completed" as const,
+              execution: {
+                stdout,
+                stderr,
+                exitCode,
+                runId,
+                timestamp: new Date().toISOString(),
+              },
+            }
+          : tc
+      );
+      handlers.updateToolCalls(updatedCalls);
+      handlers.setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMsgId
+            ? { ...msg, toolCalls: updatedCalls }
+            : msg
+        )
+      );
+
+      // Update task to completed
+      handlers.setTasks((prev) =>
+        prev.map((t) =>
+          t.id === runId
+            ? {
+                ...t,
+                status: "completed" as const,
+                result: stdout || stderr || "(no output)",
+                completedAt: new Date().toISOString(),
+              }
+            : t
+        )
+      );
+      break;
+    }
+
     case "memory_updated": {
       // Agent saved new memories during this turn — light up the badge.
       handlers.setMemoryUpdated(true);
