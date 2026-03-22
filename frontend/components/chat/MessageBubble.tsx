@@ -12,8 +12,11 @@ import type { Message, ToolCall } from "@/lib/types";
 
 /** Returns true when a tool call should be rendered as a CodeExecutionCard. */
 function isExecuteToolCall(toolCall: ToolCall): boolean {
-  // Render as terminal card if the tool is named "execute" or has structured execution data
-  return toolCall.name === "execute" || toolCall.execution != null;
+  // Only route tool calls explicitly named "execute" to the terminal card.
+  // Checking the name is sufficient — the SSE handler only ever attaches
+  // `execution` data to the matching execute tool call, so the name check
+  // avoids accidentally rendering unrelated tool calls as CodeExecutionCards.
+  return toolCall.name === "execute";
 }
 
 export interface MessageBubbleProps {

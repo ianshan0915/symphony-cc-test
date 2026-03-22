@@ -893,7 +893,9 @@ function processSSEEvent(
       const runId = data.run_id as string;
       const stdout = (data.stdout as string) ?? "";
       const stderr = (data.stderr as string) ?? "";
-      const exitCode = (data.exit_code as number) ?? 0;
+      // Use null as sentinel when exit_code is absent — do NOT default to 0 (success)
+      const exitCode: number | null =
+        data.exit_code != null ? (data.exit_code as number) : null;
 
       const updatedCalls = currentToolCalls.map((tc) =>
         tc.id === runId || tc.runId === runId
@@ -926,7 +928,7 @@ function processSSEEvent(
             ? {
                 ...t,
                 status: "completed" as const,
-                result: stdout || stderr,
+                result: stdout || stderr || "(no output)",
                 completedAt: new Date().toISOString(),
               }
             : t

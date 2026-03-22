@@ -178,9 +178,21 @@ describe("CodeExecutionCard", () => {
     await act(async () => {
       render(<CodeExecutionCard toolCall={toolCall} />);
     });
-    // Component only auto-expands when output is non-empty; manually expand here.
-    fireEvent.click(screen.getByRole("button"));
+    // Empty output should also auto-expand so users don't miss the "(no output)" indicator.
     expect(screen.getByText("(no output)")).toBeInTheDocument();
+  });
+
+  it("shows a neutral 'exit ?' badge when exitCode is null (unknown)", () => {
+    const toolCall = makeExecuteToolCall({
+      execution: { stdout: "partial\n", stderr: "", exitCode: null },
+    });
+    render(<CodeExecutionCard toolCall={toolCall} />);
+    const badge = screen.getByTestId("exit-code-badge");
+    expect(badge).toHaveTextContent("exit ?");
+    expect(badge).toHaveAttribute("aria-label", "Exit code unknown");
+    // Should use neutral zinc styling, not green or red
+    expect(badge.className).not.toMatch(/green/);
+    expect(badge.className).not.toMatch(/red/);
   });
 
   // ---------------------------------------------------------------------------

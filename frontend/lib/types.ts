@@ -160,8 +160,12 @@ export interface CodeExecution {
   stdout: string;
   /** Standard error output from the executed command */
   stderr: string;
-  /** Process exit code — 0 typically means success */
-  exitCode: number;
+  /**
+   * Process exit code — 0 means success, non-zero means failure.
+   * `null` means the exit code was not provided (e.g. a partial/error payload).
+   * Callers must not treat `null` as success.
+   */
+  exitCode: number | null;
   /** Backend run_id used to correlate with the originating tool call */
   runId?: string;
   /** ISO timestamp of when the execution completed */

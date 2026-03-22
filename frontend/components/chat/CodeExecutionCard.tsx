@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CheckCircle2,
   XCircle,
+  HelpCircle,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,10 @@ export function CodeExecutionCard({
   className,
 }: CodeExecutionCardProps) {
   const [isExpanded, setIsExpanded] = React.useState(false);
+  // Guard so the auto-expand fires only once per mount — prevents re-expansion
+  // of an output the user has manually collapsed when the parent re-renders
+  // (e.g. a new SSE token arrives and creates a new `execution` object reference).
+  const autoExpandedRef = React.useRef(false);
 
   const { execution } = toolCall;
   const status = toolCall.status ?? "completed";
@@ -50,14 +55,17 @@ export function CodeExecutionCard({
     (execution.stdout.length + execution.stderr.length >
       OUTPUT_COLLAPSE_THRESHOLD);
 
-  // Auto-expand when there is non-empty output and it's short enough
+  // Auto-expand once when execution arrives and output is within threshold.
+  // Includes the empty-output case so users don't need to click to see "(no output)".
   React.useEffect(() => {
-    if (execution && hasOutput && !isLongOutput) {
+    if (!autoExpandedRef.current && execution && !isLongOutput) {
+      autoExpandedRef.current = true;
       setIsExpanded(true);
     }
-  }, [execution, hasOutput, isLongOutput]);
+  }, [execution, isLongOutput]);
 
   const exitSuccess = execution && execution.exitCode === 0;
+  const exitUnknown = execution && execution.exitCode === null;
 
   return (
     <div
@@ -90,19 +98,25 @@ export function CodeExecutionCard({
           <span
             className={cn(
               "inline-flex items-center gap-1 text-[10px] font-sans font-medium rounded px-1.5 py-0.5 shrink-0",
-              exitSuccess
-                ? "bg-green-900/60 text-green-400"
-                : "bg-red-900/60 text-red-400"
+              exitUnknown
+                ? "bg-zinc-800 text-zinc-400"
+                : exitSuccess
+                  ? "bg-green-900/60 text-green-400"
+                  : "bg-red-900/60 text-red-400"
             )}
-            aria-label={`Exit code ${execution.exitCode}`}
+            aria-label={
+              exitUnknown ? "Exit code unknown" : `Exit code ${execution.exitCode}`
+            }
             data-testid="exit-code-badge"
           >
-            {exitSuccess ? (
+            {exitUnknown ? (
+              <HelpCircle className="h-3 w-3" />
+            ) : exitSuccess ? (
               <CheckCircle2 className="h-3 w-3" />
             ) : (
               <XCircle className="h-3 w-3" />
             )}
-            exit {execution.exitCode}
+            {exitUnknown ? "exit ?" : `exit ${execution.exitCode}`}
           </span>
         ) : null}
 

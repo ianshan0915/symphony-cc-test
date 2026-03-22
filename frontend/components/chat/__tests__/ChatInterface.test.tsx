@@ -682,4 +682,38 @@ describe("ChatInterface execute_result SSE events", () => {
       expect(badge).toHaveTextContent("exit 1");
     });
   });
+
+  it("shows an 'exit ?' badge when execute_result omits exit_code", async () => {
+    const toolCallPayload = JSON.stringify({
+      tool_name: "execute",
+      tool_input: { command: "echo partial" },
+      run_id: "run-exec-5",
+    });
+    // Intentionally omit exit_code — simulates a partial/error payload
+    const execResultPayload = JSON.stringify({
+      run_id: "run-exec-5",
+      stdout: "partial\n",
+      stderr: "",
+    });
+
+    setupSubAgentFetchMock(
+      "event: message_start\ndata: {\"thread_id\":\"t1\"}\n\n" +
+      `event: tool_call\ndata: ${toolCallPayload}\n\n` +
+      `event: execute_result\ndata: ${execResultPayload}\n\n` +
+      "event: message_end\ndata: {\"thread_id\":\"t1\",\"content\":\"Done\",\"tool_calls\":null}\n\n",
+    );
+
+    await act(async () => {
+      render(<AuthProvider><ChatInterface /></AuthProvider>);
+    });
+
+    const input = screen.getByLabelText("Message input");
+    await userEvent.type(input, "Unknown exit{Enter}");
+
+    await waitFor(() => {
+      const badge = screen.getByTestId("exit-code-badge");
+      expect(badge).toHaveTextContent("exit ?");
+      expect(badge).toHaveAttribute("aria-label", "Exit code unknown");
+    });
+  });
 });
