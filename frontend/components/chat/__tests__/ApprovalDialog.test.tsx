@@ -27,7 +27,7 @@ describe("ApprovalDialog", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("renders dialog with tool name when approval is provided", () => {
+  it("renders dialog with human-readable description when approval is provided", () => {
     render(
       <ApprovalDialog
         approval={mockApproval}
@@ -36,11 +36,12 @@ describe("ApprovalDialog", () => {
         onEdit={jest.fn()}
       />
     );
-    expect(screen.getByText("Approval Required")).toBeInTheDocument();
-    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText(/Permission Required/)).toBeInTheDocument();
+    // Should show human-readable description, not raw tool name
+    expect(screen.getByText(/Symphony wants to search the web/)).toBeInTheDocument();
   });
 
-  it("shows tool arguments in the dialog", () => {
+  it("shows tool args formatted as readable text", () => {
     render(
       <ApprovalDialog
         approval={mockApproval}
@@ -49,10 +50,12 @@ describe("ApprovalDialog", () => {
         onEdit={jest.fn()}
       />
     );
-    expect(screen.getByText(/test search/)).toBeInTheDocument();
+    // Should show the query in a readable format (appears in both description and summary)
+    expect(screen.getAllByText(/test search/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Up to 5 results/)).toBeInTheDocument();
   });
 
-  it("calls onApprove when Approve button is clicked", async () => {
+  it("calls onApprove when Allow button is clicked", async () => {
     const onApprove = jest.fn();
     render(
       <ApprovalDialog
@@ -63,12 +66,12 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    const approveBtn = screen.getByRole("button", { name: /approve/i });
-    await userEvent.click(approveBtn);
+    const allowBtn = screen.getByRole("button", { name: /allow/i });
+    await userEvent.click(allowBtn);
     expect(onApprove).toHaveBeenCalledWith("approval-1");
   });
 
-  it("shows reject reason input on first Reject click, then calls onReject on second", async () => {
+  it("shows deny reason input on first Deny click, then calls onReject on second", async () => {
     const onReject = jest.fn();
     render(
       <ApprovalDialog
@@ -80,21 +83,21 @@ describe("ApprovalDialog", () => {
     );
 
     // First click reveals the reason input
-    const rejectBtn = screen.getByRole("button", { name: /reject/i });
-    await userEvent.click(rejectBtn);
+    const denyBtn = screen.getByRole("button", { name: /^deny$/i });
+    await userEvent.click(denyBtn);
 
     // Should now show the reason textarea
     const reasonInput = screen.getByPlaceholderText(
-      /why are you rejecting/i
+      /why are you denying/i
     );
     expect(reasonInput).toBeInTheDocument();
 
     // Type a reason
     await userEvent.type(reasonInput, "Not safe");
 
-    // Click confirm reject
+    // Click confirm deny
     const confirmBtn = screen.getByRole("button", {
-      name: /confirm reject/i,
+      name: /confirm deny/i,
     });
     await userEvent.click(confirmBtn);
 
@@ -112,15 +115,13 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    const approveBtn = screen.getByRole("button", { name: /approv/i });
-    const rejectBtn = screen.getByRole("button", { name: /reject/i });
-    const editBtn = screen.getByRole("button", { name: /edit/i });
-    expect(approveBtn).toBeDisabled();
-    expect(rejectBtn).toBeDisabled();
-    expect(editBtn).toBeDisabled();
+    const allowBtn = screen.getByRole("button", { name: /allow/i });
+    const denyBtn = screen.getByRole("button", { name: /deny/i });
+    expect(allowBtn).toBeDisabled();
+    expect(denyBtn).toBeDisabled();
   });
 
-  it("shows 'Approving...' text when submitting", () => {
+  it("shows 'Allowing...' text when submitting", () => {
     render(
       <ApprovalDialog
         approval={mockApproval}
@@ -131,10 +132,10 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    expect(screen.getByText("Approving...")).toBeInTheDocument();
+    expect(screen.getByText("Allowing...")).toBeInTheDocument();
   });
 
-  it("shows Edit button in initial state", () => {
+  it("has a 'View technical details' expandable section", async () => {
     render(
       <ApprovalDialog
         approval={mockApproval}
@@ -144,10 +145,18 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    expect(screen.getByRole("button", { name: /^edit$/i })).toBeInTheDocument();
+    const detailsBtn = screen.getByText(/View technical details/);
+    expect(detailsBtn).toBeInTheDocument();
+
+    // Click to expand
+    await userEvent.click(detailsBtn);
+
+    // Should show raw tool name and JSON args
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText(/Edit arguments/)).toBeInTheDocument();
   });
 
-  it("shows editable JSON textarea when Edit is clicked", async () => {
+  it("shows editable JSON textarea when Edit arguments is clicked in technical details", async () => {
     render(
       <ApprovalDialog
         approval={mockApproval}
@@ -157,8 +166,11 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    const editBtn = screen.getByRole("button", { name: /^edit$/i });
-    await userEvent.click(editBtn);
+    // Expand technical details
+    await userEvent.click(screen.getByText(/View technical details/));
+
+    // Click edit
+    await userEvent.click(screen.getByText(/Edit arguments/));
 
     const editTextarea = screen.getByLabelText(/edit tool arguments/i);
     expect(editTextarea).toBeInTheDocument();
@@ -167,9 +179,12 @@ describe("ApprovalDialog", () => {
       JSON.stringify(mockApproval.toolArgs, null, 2)
     );
 
-    // Button should now say "Confirm Edit"
+    // Footer should show Confirm Edit + Cancel
     expect(
       screen.getByRole("button", { name: /confirm edit/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /cancel/i })
     ).toBeInTheDocument();
   });
 
@@ -184,21 +199,20 @@ describe("ApprovalDialog", () => {
       />
     );
 
-    // Enter edit mode
-    const editBtn = screen.getByRole("button", { name: /^edit$/i });
-    await userEvent.click(editBtn);
+    // Enter edit mode via technical details
+    await userEvent.click(screen.getByText(/View technical details/));
+    await userEvent.click(screen.getByText(/Edit arguments/));
 
-    // Modify the args (use fireEvent.change to avoid userEvent escaping curly braces)
+    // Modify the args
     const editTextarea = screen.getByLabelText(/edit tool arguments/i);
     fireEvent.change(editTextarea, {
       target: { value: '{"query":"modified search","max_results":10}' },
     });
 
     // Confirm edit
-    const confirmEditBtn = screen.getByRole("button", {
-      name: /confirm edit/i,
-    });
-    await userEvent.click(confirmEditBtn);
+    await userEvent.click(
+      screen.getByRole("button", { name: /confirm edit/i })
+    );
 
     expect(onEdit).toHaveBeenCalledWith("approval-1", {
       query: "modified search",
@@ -217,46 +231,40 @@ describe("ApprovalDialog", () => {
     );
 
     // Enter edit mode
-    const editBtn = screen.getByRole("button", { name: /^edit$/i });
-    await userEvent.click(editBtn);
+    await userEvent.click(screen.getByText(/View technical details/));
+    await userEvent.click(screen.getByText(/Edit arguments/));
 
-    // Enter invalid JSON (use fireEvent.change to avoid userEvent escaping curly braces)
+    // Enter invalid JSON
     const editTextarea = screen.getByLabelText(/edit tool arguments/i);
     fireEvent.change(editTextarea, { target: { value: "not valid json {" } });
 
     // Attempt confirm
-    const confirmEditBtn = screen.getByRole("button", {
-      name: /confirm edit/i,
-    });
-    await userEvent.click(confirmEditBtn);
+    await userEvent.click(
+      screen.getByRole("button", { name: /confirm edit/i })
+    );
 
-    // Should show error, not call onEdit
+    // Should show error
     expect(screen.getByText(/invalid json/i)).toBeInTheDocument();
   });
 
-  it("clicking Edit hides the reject reason input if it was shown", async () => {
+  it("renders human-readable summary for execute tool", () => {
+    const execApproval: ApprovalRequest = {
+      id: "approval-2",
+      threadId: "thread-1",
+      toolName: "execute",
+      toolArgs: { command: "rm -rf /tmp/test" },
+      runId: "run-2",
+      createdAt: new Date().toISOString(),
+    };
     render(
       <ApprovalDialog
-        approval={mockApproval}
+        approval={execApproval}
         onApprove={jest.fn()}
         onReject={jest.fn()}
         onEdit={jest.fn()}
       />
     );
-
-    // Show reject input
-    await userEvent.click(screen.getByRole("button", { name: /reject/i }));
-    expect(
-      screen.getByPlaceholderText(/why are you rejecting/i)
-    ).toBeInTheDocument();
-
-    // Switch to edit mode
-    await userEvent.click(screen.getByRole("button", { name: /^edit$/i }));
-
-    // Reject input should be gone, edit textarea should be shown
-    expect(
-      screen.queryByPlaceholderText(/why are you rejecting/i)
-    ).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/edit tool arguments/i)).toBeInTheDocument();
+    expect(screen.getByText(/Symphony wants to run a command/)).toBeInTheDocument();
+    expect(screen.getAllByText(/rm -rf \/tmp\/test/).length).toBeGreaterThanOrEqual(1);
   });
 });

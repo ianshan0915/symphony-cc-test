@@ -289,29 +289,36 @@ class AgentService:
 
         The middleware unpacks this via ``interrupt(hitl_request)["decisions"]``
         and processes each decision against the corresponding tool call.
+
+        IMPORTANT: When the LLM generates multiple tool calls in a single
+        turn, the middleware requires exactly one decision per tool call.
+        The ``action_count`` field (set by ``extract_interrupt``) tells us
+        how many decisions to send.  The user's single decision is applied
+        to all pending tool calls.
         """
         dtype = decision.get("type", "reject")
+        action_count = decision.get("action_count", 1)
+
         if dtype == "approve":
-            return Command(resume={"decisions": [{"type": "approve"}]})
+            single = {"type": "approve"}
+            return Command(resume={"decisions": [single] * action_count})
         if dtype == "edit":
             tool_name = decision.get("tool_name", "unknown")
             modified_args = decision.get("modified_args") or {}
-            return Command(
-                resume={
-                    "decisions": [
-                        {
-                            "type": "edit",
-                            "edited_action": {
-                                "name": tool_name,
-                                "args": modified_args,
-                            },
-                        }
-                    ]
-                }
-            )
+            # Edit applies to the first tool call; approve the rest
+            first = {
+                "type": "edit",
+                "edited_action": {
+                    "name": tool_name,
+                    "args": modified_args,
+                },
+            }
+            rest = [{"type": "approve"}] * (action_count - 1)
+            return Command(resume={"decisions": [first] + rest})
         # reject (default)
         reason = decision.get("reason") or "User rejected the action"
-        return Command(resume={"decisions": [{"type": "reject", "message": reason}]})
+        single = {"type": "reject", "message": reason}
+        return Command(resume={"decisions": [single] * action_count})
 
     # ------------------------------------------------------------------
     # Main streaming interface
@@ -507,19 +514,25 @@ class AgentService:
                 )
                 self._pending_interrupts[thread_id] = pending
                 try:
-                    # Emit approval_required event (backward compatible + new fields)
+                    # Emit approval_required event (backward compatible + new fields).
+                    # Include all_actions when the LLM generated multiple tool
+                    # calls so the frontend can display all pending tools.
+                    all_actions = interrupt_data.get("action_requests")
+                    approval_data: dict[str, Any] = {
+                        "approval_id": approval_id,
+                        "thread_id": thread_id,
+                        "tool_name": tool_name,
+                        "tool_args": (
+                            tool_args if isinstance(tool_args, dict) else {"input": tool_args}
+                        ),
+                        "run_id": run_id,
+                        "allowed_decisions": allowed_decisions,
+                    }
+                    if all_actions and len(all_actions) > 1:
+                        approval_data["additional_tools"] = all_actions[1:]
                     yield SSEEvent(
                         event="approval_required",
-                        data={
-                            "approval_id": approval_id,
-                            "thread_id": thread_id,
-                            "tool_name": tool_name,
-                            "tool_args": (
-                                tool_args if isinstance(tool_args, dict) else {"input": tool_args}
-                            ),
-                            "run_id": run_id,
-                            "allowed_decisions": allowed_decisions,
-                        },
+                        data=approval_data,
                     )
 
                     # Wait for user decision (with timeout)
@@ -538,8 +551,10 @@ class AgentService:
                     self._pending_interrupts.pop(thread_id, None)
 
                 decision = pending.decision or {"type": "reject", "reason": "No decision received"}
-                # Inject tool_name into decision so _build_resume_command can use it for edit
+                # Inject tool_name and action_count into decision so
+                # _build_resume_command can generate one decision per tool call.
                 decision["tool_name"] = tool_name
+                decision["action_count"] = interrupt_data.get("action_count", 1)
                 dtype = decision.get("type", "reject")
 
                 # Build approval_result event data based on decision type

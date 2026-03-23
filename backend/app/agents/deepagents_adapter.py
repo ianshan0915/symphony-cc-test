@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
+import time
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
@@ -54,6 +56,16 @@ _FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
 _ARTIFACT_WRITE_TOOLS: frozenset[str] = frozenset(
     {"write_file", "create_file", "edit_file"}
 )
+
+# File extensions that should be auto-detected as artifacts when produced
+# by code execution.  These are "viewable" formats the frontend can render.
+_EXECUTE_ARTIFACT_EXTENSIONS: frozenset[str] = frozenset(
+    {".html", ".htm", ".svg", ".csv", ".json", ".md"}
+)
+
+# Maximum file size (bytes) to inline as an artifact from execute output.
+# Larger files are skipped to avoid bloating the SSE stream.
+_EXECUTE_ARTIFACT_MAX_SIZE: int = 10 * 1024 * 1024  # 10 MB
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +135,113 @@ def _parse_execute_result(content: str) -> dict[str, Any]:
         stdout = content.strip()
 
     return {"stdout": stdout, "stderr": stderr, "exit_code": exit_code}
+
+
+# ---------------------------------------------------------------------------
+# Execute artifact scanner
+# ---------------------------------------------------------------------------
+
+# Track files already emitted as artifacts (by mtime) to avoid duplicates
+# across multiple execute calls in the same session.
+_emitted_artifact_files: dict[str, float] = {}
+
+
+def _scan_execute_artifacts(run_id: str) -> list[SSEEvent]:
+    """Scan the sandbox workspace for output files produced by code execution.
+
+    After a successful ``execute`` tool call, this function checks the sandbox
+    workspace directory for recently created/modified files with viewable
+    extensions (e.g. ``.html``, ``.svg``, ``.csv``).  For each new file found,
+    an ``artifact_created`` SSE event is emitted so the frontend can display
+    them in the artifact panel.
+
+    This bridges the gap between files written via ``write_file`` (which already
+    produce artifacts) and files generated as side effects of code execution
+    (e.g. a Python script that generates an HTML dashboard).
+
+    Parameters
+    ----------
+    run_id:
+        The run_id of the execute tool call, used to tag the artifact events.
+
+    Returns
+    -------
+    list[SSEEvent]
+        Zero or more ``artifact_created`` events for newly detected files.
+    """
+    from app.config import settings
+
+    workspace = settings.sandbox_workspace_dir
+    if not os.path.isdir(workspace):
+        return []
+
+    events: list[SSEEvent] = []
+    now = time.time()
+    # Only consider files modified within the last 60 seconds
+    recency_threshold = 60.0
+
+    try:
+        for entry in os.scandir(workspace):
+            if not entry.is_file():
+                continue
+
+            _, ext = os.path.splitext(entry.name.lower())
+            if ext not in _EXECUTE_ARTIFACT_EXTENSIONS:
+                continue
+
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue
+
+            # Skip files that are too old (not from this execution)
+            if now - stat.st_mtime > recency_threshold:
+                continue
+
+            # Skip files that are too large
+            if stat.st_size > _EXECUTE_ARTIFACT_MAX_SIZE:
+                logger.debug(
+                    "Skipping large execute artifact %s (%d bytes)",
+                    entry.name,
+                    stat.st_size,
+                )
+                continue
+
+            # Skip files we've already emitted (same path and mtime)
+            prev_mtime = _emitted_artifact_files.get(entry.path)
+            if prev_mtime is not None and prev_mtime >= stat.st_mtime:
+                continue
+
+            # Read the file content
+            try:
+                with open(entry.path, "r", encoding="utf-8", errors="replace") as f:
+                    file_content = f.read()
+            except OSError:
+                continue
+
+            _emitted_artifact_files[entry.path] = stat.st_mtime
+
+            events.append(
+                SSEEvent(
+                    event="artifact_created",
+                    data={
+                        "run_id": run_id,
+                        "tool_name": "execute",
+                        "file_path": entry.name,
+                        "content": file_content,
+                    },
+                )
+            )
+            logger.info(
+                "Execute artifact detected: %s (%d bytes)",
+                entry.name,
+                stat.st_size,
+            )
+
+    except OSError:
+        logger.debug("Failed to scan sandbox workspace for execute artifacts", exc_info=True)
+
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +427,13 @@ def map_state_update(
                         )
                     )
 
+                    # Scan the sandbox workspace for output files produced by
+                    # the execute command (e.g. HTML dashboards, CSV exports).
+                    # Only emit artifacts for successful executions.
+                    if parsed.get("exit_code", -1) == 0:
+                        for artifact_event in _scan_execute_artifacts(run_id):
+                            events.append(artifact_event)
+
                 # With CompositeBackend, deepagents offloads large tool
                 # outputs to the filesystem automatically (returning a
                 # pointer instead of inline content).  The blunt 2K
@@ -467,6 +593,11 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
     # HumanInTheLoopMiddleware emits HITLRequest with action_requests and
     # review_configs.  Normalise to the tool_name/tool_args format expected
     # by the SSE layer.
+    #
+    # IMPORTANT: The LLM may generate *multiple* tool calls in a single turn
+    # that all require approval.  We must track ALL of them so the resume
+    # command sends back one decision per tool call (the middleware enforces
+    # decisions.length == action_requests.length).
     action_requests = value.get("action_requests")
     if action_requests and isinstance(action_requests, list) and len(action_requests) > 0:
         first_action = action_requests[0]
@@ -479,10 +610,21 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
             if review_configs
             else ["approve", "reject"]
         )
+        # Build per-action list so the resume handler can generate one
+        # decision per pending tool call.
+        all_actions = [
+            {
+                "name": ar.get("name", "unknown"),
+                "args": ar.get("args", {}),
+            }
+            for ar in action_requests
+        ]
         return {
             "tool_name": tool_name,
             "tool_args": tool_args,
             "allowed_decisions": allowed_decisions,
+            "action_requests": all_actions,
+            "action_count": len(all_actions),
         }
 
     return value

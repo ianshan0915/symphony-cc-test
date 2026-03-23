@@ -40,6 +40,8 @@ export interface ApprovalRequest {
   runId: string;
   /** Timestamp of the request */
   createdAt: string;
+  /** Additional tool calls requiring approval in the same turn (when LLM generates multiple) */
+  additionalTools?: Array<{ name: string; args: Record<string, unknown> }>;
 }
 
 /** User's decision on an approval request */
