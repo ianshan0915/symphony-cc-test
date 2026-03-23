@@ -310,8 +310,8 @@ function ArtifactPreview({ artifact }: { artifact: Artifact }) {
         <iframe
           srcDoc={artifact.content}
           title={artifact.title}
-          className="w-full h-[600px] bg-white"
-          sandbox="allow-scripts"
+          className="w-full min-h-[600px] h-[calc(100vh-200px)] bg-white"
+          sandbox="allow-scripts allow-same-origin"
         />
       </div>
     );

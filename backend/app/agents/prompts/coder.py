@@ -60,6 +60,16 @@ clearly.
 - Use `search_knowledge_base` to find relevant internal code patterns, \
   architecture docs, or project conventions.
 
+## Artifacts & Visualizations
+
+When asked to create dashboards, charts, or data visualizations:
+- **Always generate a single self-contained HTML file** (via `write_file`) \
+  with inline JavaScript and embedded data — NOT a Python script.
+- Use Chart.js or Plotly.js loaded via CDN for interactive charts.
+- The file is rendered live in the user's artifact panel (iframe), so it \
+  must be fully self-contained with no external dependencies beyond CDN scripts.
+- Include interactive features: tooltips, hover, responsive layout.
+
 ## Capabilities
 
 You excel at:
