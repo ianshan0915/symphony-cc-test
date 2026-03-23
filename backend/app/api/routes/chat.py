@@ -217,14 +217,17 @@ async def chat_stream(
     # Resolve or create thread
     thread: Thread | None = None
     if thread_id is not None:
-        thread = await thread_svc.get(thread_id)
+        thread = await thread_svc.get(thread_id, user_id=current_user.id)
         if thread is None:
             raise HTTPException(status_code=404, detail="Thread not found")
     else:
         from app.models.thread import ThreadCreate
 
         aid = str(assistant_id) if assistant_id else "default"
-        thread = await thread_svc.create(ThreadCreate(title=body.message[:80], assistant_id=aid))
+        thread = await thread_svc.create(
+            ThreadCreate(title=body.message[:80], assistant_id=aid),
+            user_id=current_user.id,
+        )
 
     # Persist user message
     await _persist_user_message(session, thread, body.message)

@@ -39,6 +39,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from app.config import settings
@@ -104,6 +105,9 @@ def create_sandbox_backend() -> Any | None:
                 "deepagents package is required for LocalShellBackend. "
                 "Install it with: pip install deepagents"
             ) from exc
+
+        # Ensure the workspace directory exists
+        os.makedirs(settings.sandbox_workspace_dir, exist_ok=True)
 
         backend = LocalShellBackend(
             root_dir=settings.sandbox_workspace_dir,

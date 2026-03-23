@@ -248,8 +248,19 @@ class AgentService:
             # V2 events have an `ns` attribute for the subagent namespace
             ns: tuple[str, ...] | None = getattr(event, "ns", None)
 
-            # V2 events also carry `mode` and `data` attributes
-            if hasattr(event, "event") and hasattr(event, "data"):
+            # V2 streaming with subgraphs=True emits events in multiple
+            # possible formats depending on the LangGraph version:
+            #
+            # 1. Dict format: {"type": "messages"|"updates", "ns": (...), "data": ...}
+            # 2. Object format: event.event / event.data attributes
+            # 3. Tuple format: (mode, payload) for v1-style events
+            if isinstance(event, dict) and "type" in event and "data" in event:
+                # Dict-style V2 events (LangGraph >=0.2)
+                mode = event["type"]
+                chunk = event["data"]
+                ns = event.get("ns") or ns
+                yield (mode, chunk, ns)
+            elif hasattr(event, "event") and hasattr(event, "data"):
                 mode = event.event  # type: ignore[union-attr]
                 chunk = event.data  # type: ignore[union-attr]
                 yield (mode, chunk, ns)
@@ -268,24 +279,39 @@ class AgentService:
     def _build_resume_command(decision: dict[str, Any]) -> Command:
         """Build a :class:`Command` to resume the graph after an interrupt.
 
-        Maps the three decision types to the appropriate resume value:
+        The ``HumanInTheLoopMiddleware`` expects the resume value to be a
+        ``HITLResponse`` dict: ``{"decisions": [Decision]}``, where each
+        ``Decision`` is one of:
 
-        * ``approve`` → ``Command(resume=True)``
-        * ``edit``    → ``Command(resume={"decision": "edit", "tool_args": ...})``
-        * ``reject``  → ``Command(resume=False)``
+        * ``{"type": "approve"}``
+        * ``{"type": "edit", "edited_action": {"name": ..., "args": ...}}``
+        * ``{"type": "reject", "message": ...}``
+
+        The middleware unpacks this via ``interrupt(hitl_request)["decisions"]``
+        and processes each decision against the corresponding tool call.
         """
         dtype = decision.get("type", "reject")
         if dtype == "approve":
-            return Command(resume=True)
+            return Command(resume={"decisions": [{"type": "approve"}]})
         if dtype == "edit":
+            tool_name = decision.get("tool_name", "unknown")
+            modified_args = decision.get("modified_args") or {}
             return Command(
                 resume={
-                    "decision": "edit",
-                    "tool_args": decision.get("modified_args") or {},
+                    "decisions": [
+                        {
+                            "type": "edit",
+                            "edited_action": {
+                                "name": tool_name,
+                                "args": modified_args,
+                            },
+                        }
+                    ]
                 }
             )
         # reject (default)
-        return Command(resume=False)
+        reason = decision.get("reason") or "User rejected the action"
+        return Command(resume={"decisions": [{"type": "reject", "message": reason}]})
 
     # ------------------------------------------------------------------
     # Main streaming interface
@@ -374,6 +400,10 @@ class AgentService:
         structured_response: dict[str, Any] | None = None
         # Track active subagent namespaces to emit start/end events
         active_subagents: set[str] = set()
+        # Accumulated AIMessage tool_calls across updates — shared with
+        # map_state_update so it can emit artifact_created events with
+        # the original tool call args (file content).
+        pending_tool_calls: dict[str, dict[str, Any]] = {}
 
         try:
             # Stream with potential interrupt/resume loop
@@ -429,7 +459,7 @@ class AgentService:
                             sr = extract_structured_response(chunk)
                             if sr is not None:
                                 structured_response = sr
-                            for sse_event in map_state_update(chunk):
+                            for sse_event in map_state_update(chunk, pending_tool_calls):
                                 if subagent_name:
                                     yield SSEEvent(
                                         event="sub_agent_progress",
@@ -508,6 +538,8 @@ class AgentService:
                     self._pending_interrupts.pop(thread_id, None)
 
                 decision = pending.decision or {"type": "reject", "reason": "No decision received"}
+                # Inject tool_name into decision so _build_resume_command can use it for edit
+                decision["tool_name"] = tool_name
                 dtype = decision.get("type", "reject")
 
                 # Build approval_result event data based on decision type

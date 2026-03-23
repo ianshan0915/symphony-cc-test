@@ -22,7 +22,7 @@ import contextlib
 import logging
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from app.services.sse import SSEEvent
 
@@ -42,11 +42,17 @@ _FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
         "ls",
         "read_file",
         "write_file",
+        "create_file",
         "edit_file",
         "glob",
         "grep",
         "execute",
     }
+)
+
+# Tools that produce artifacts (files with user-visible content).
+_ARTIFACT_WRITE_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "create_file", "edit_file"}
 )
 
 
@@ -178,7 +184,10 @@ def map_message_chunk(
 # ---------------------------------------------------------------------------
 
 
-def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
+def map_state_update(
+    update: dict[str, Any],
+    pending_tool_calls: dict[str, dict[str, Any]] | None = None,
+) -> list[SSEEvent]:
     """Map a LangGraph *updates*-mode payload to zero or more SSE events.
 
     Handles two event types:
@@ -208,7 +217,16 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         messages: list[Any] = []
         if isinstance(node_output, dict):
-            messages = node_output.get("messages", [])
+            raw_messages = node_output.get("messages", [])
+            # deepagents may wrap messages in a LangGraph ``Overwrite``
+            # container (e.g. ``Overwrite(value=[...])``) when replacing
+            # state.  Unwrap to get the underlying list.
+            if hasattr(raw_messages, "value"):
+                messages = raw_messages.value if isinstance(raw_messages.value, list) else []
+            elif isinstance(raw_messages, list):
+                messages = raw_messages
+            else:
+                messages = []
 
             # Detect a summarization event emitted by SummarizationMiddleware.
             # The middleware stores the event under the private state key
@@ -238,6 +256,20 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         elif isinstance(node_output, list):
             messages = node_output
+
+        # Accumulate tool_call_id → args from AIMessages across updates.
+        # AIMessages with tool_calls appear in the "agent" node update,
+        # while the corresponding ToolMessages appear later in the "tools"
+        # node update.  By accumulating into `pending_tool_calls` we can
+        # look up the original args when processing tool results.
+        if pending_tool_calls is None:
+            pending_tool_calls = {}
+        for msg in messages:
+            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                for tc in msg.tool_calls:
+                    tc_id = tc.get("id", "")
+                    if tc_id:
+                        pending_tool_calls[tc_id] = tc.get("args", {})
 
         for msg in messages:
             if isinstance(msg, ToolMessage):
@@ -289,6 +321,35 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                         },
                     )
                 )
+
+                # For artifact-producing tools (write/create/edit), emit an
+                # ``artifact_created`` event with the file path and content
+                # so the frontend can display the artifact in the panel.
+                if tool_name in _ARTIFACT_WRITE_TOOLS:
+                    original_args = pending_tool_calls.get(run_id, {})
+                    file_path = (
+                        original_args.get("file_path")
+                        or original_args.get("path")
+                        or ""
+                    )
+                    file_content = (
+                        original_args.get("content")
+                        or original_args.get("new_content")
+                        or original_args.get("text")
+                        or ""
+                    )
+                    if file_path and file_content:
+                        events.append(
+                            SSEEvent(
+                                event="artifact_created",
+                                data={
+                                    "run_id": run_id,
+                                    "tool_name": tool_name,
+                                    "file_path": file_path,
+                                    "content": file_content,
+                                },
+                            )
+                        )
 
     return events
 
@@ -402,6 +463,27 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         value = {"data": value}
+
+    # HumanInTheLoopMiddleware emits HITLRequest with action_requests and
+    # review_configs.  Normalise to the tool_name/tool_args format expected
+    # by the SSE layer.
+    action_requests = value.get("action_requests")
+    if action_requests and isinstance(action_requests, list) and len(action_requests) > 0:
+        first_action = action_requests[0]
+        tool_name = first_action.get("name", "unknown")
+        tool_args = first_action.get("args", {})
+        # Extract allowed_decisions from review_configs
+        review_configs = value.get("review_configs", [])
+        allowed_decisions = (
+            review_configs[0].get("allowed_decisions", ["approve", "reject"])
+            if review_configs
+            else ["approve", "reject"]
+        )
+        return {
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "allowed_decisions": allowed_decisions,
+        }
 
     return value
 
