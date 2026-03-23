@@ -348,9 +348,7 @@ class TestStreamResponseInterrupt:
         from langgraph.types import Command
 
         assert isinstance(resume_input, Command)
-        assert resume_input.resume == {
-            "decisions": [{"type": "reject", "message": "Not now"}]
-        }
+        assert resume_input.resume == {"decisions": [{"type": "reject", "message": "Not now"}]}
 
     @pytest.mark.asyncio
     async def test_interrupt_with_langgraph_interrupt_object(self) -> None:
@@ -489,7 +487,9 @@ class TestBuildResumeCommand:
 
         cmd = AgentService._build_resume_command({"type": "unknown"})
         assert isinstance(cmd, Command)
-        assert cmd.resume == {"decisions": [{"type": "reject", "message": "User rejected the action"}]}
+        assert cmd.resume == {
+            "decisions": [{"type": "reject", "message": "User rejected the action"}]
+        }
 
 
 # ---------------------------------------------------------------------------

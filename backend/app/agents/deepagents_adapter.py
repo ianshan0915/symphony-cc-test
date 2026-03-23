@@ -53,9 +53,7 @@ _FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 # Tools that produce artifacts (files with user-visible content).
-_ARTIFACT_WRITE_TOOLS: frozenset[str] = frozenset(
-    {"write_file", "create_file", "edit_file"}
-)
+_ARTIFACT_WRITE_TOOLS: frozenset[str] = frozenset({"write_file", "create_file", "edit_file"})
 
 # File extensions that should be auto-detected as artifacts when produced
 # by code execution.  These are "viewable" formats the frontend can render.
@@ -453,11 +451,7 @@ def map_state_update(
                 # so the frontend can display the artifact in the panel.
                 if tool_name in _ARTIFACT_WRITE_TOOLS:
                     original_args = pending_tool_calls.get(run_id, {})
-                    file_path = (
-                        original_args.get("file_path")
-                        or original_args.get("path")
-                        or ""
-                    )
+                    file_path = original_args.get("file_path") or original_args.get("path") or ""
                     file_content = (
                         original_args.get("content")
                         or original_args.get("new_content")

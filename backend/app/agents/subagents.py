@@ -20,7 +20,6 @@ from app.agents.prompts import (
     get_tools_for_agent_type,
 )
 from app.agents.tools import TOOL_REGISTRY
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

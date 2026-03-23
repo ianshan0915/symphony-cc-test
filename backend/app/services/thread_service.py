@@ -43,7 +43,7 @@ class ThreadService:
         are returned (tenant isolation).
         """
         # Base filter
-        conditions = [Thread.is_deleted.is_(False)]
+        conditions: list = [Thread.is_deleted.is_(False)]
         if user_id is not None:
             conditions.append(Thread.user_id == user_id)
 
@@ -79,11 +79,7 @@ class ThreadService:
         if user_id is not None:
             conditions.append(Thread.user_id == user_id)
 
-        stmt = (
-            select(Thread)
-            .where(*conditions)
-            .options(selectinload(Thread.messages))
-        )
+        stmt = select(Thread).where(*conditions).options(selectinload(Thread.messages))
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
