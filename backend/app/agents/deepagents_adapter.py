@@ -214,7 +214,7 @@ def _scan_execute_artifacts(run_id: str) -> list[SSEEvent]:
 
             # Read the file content
             try:
-                with open(entry.path, "r", encoding="utf-8", errors="replace") as f:
+                with open(entry.path, encoding="utf-8", errors="replace") as f:
                     file_content = f.read()
             except OSError:
                 continue

@@ -314,7 +314,7 @@ class AgentService:
                 },
             }
             rest = [{"type": "approve"}] * (action_count - 1)
-            return Command(resume={"decisions": [first] + rest})
+            return Command(resume={"decisions": [first, *rest]})
         # reject (default)
         reason = decision.get("reason") or "User rejected the action"
         single = {"type": "reject", "message": reason}

@@ -25,7 +25,7 @@ export function LoadingIndicator({
   className,
 }: LoadingIndicatorProps) {
   const [elapsed, setElapsed] = React.useState(0);
-  const startTimeRef = React.useRef(Date.now());
+  const startTimeRef = React.useRef(0);
 
   // Reset timer when tool changes
   React.useEffect(() => {

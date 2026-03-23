@@ -311,7 +311,7 @@ function formatArgsAsText(
       const maxResults = args.max_results as number | undefined;
       return (
         <div>
-          {query && <p>Search for <strong>"{query}"</strong></p>}
+          {query && <p>Search for <strong>&ldquo;{query}&rdquo;</strong></p>}
           {maxResults && (
             <p className="text-xs text-muted-foreground mt-1">
               Up to {maxResults} results
