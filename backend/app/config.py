@@ -36,7 +36,17 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # --- CORS ---
+    # Configurable via CORS_ORIGINS env var (comma-separated).
+    # Example: CORS_ORIGINS=http://localhost:3000,https://app.example.com
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+        """Accept a comma-separated string or a list."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
 
     # --- LLM / LangChain ---
     openai_api_key: str = ""
