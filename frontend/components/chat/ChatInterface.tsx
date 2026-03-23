@@ -9,21 +9,30 @@ import { SubAgentProgress } from "./SubAgentProgress";
 import { TasksSidebar } from "@/components/sidebar/TasksSidebar";
 import { FilesSidebar } from "@/components/sidebar/FilesSidebar";
 import { ConversationSidebar } from "@/components/sidebar/ConversationSidebar";
+import { ArtifactPanel } from "@/components/artifacts/ArtifactPanel";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
 import { UserMenu } from "@/components/UserMenu";
 import { MemoryModal } from "@/components/memory/MemoryModal";
 import { BookOpen } from "lucide-react";
+import {
+  isArtifactProducingTool,
+  extractContentFromArgs,
+  createArtifactFromToolCall,
+  updateArtifactContent,
+} from "@/lib/artifacts";
 import type {
   Message,
   ApprovalRequest,
   AgentTask,
+  Artifact,
   FileOperation,
   SubAgent,
   ThreadDetail,
   TodoItem,
 } from "@/lib/types";
+import { safeGetItem, safeSetItem, safeRemoveItem } from "@/lib/safeStorage";
 import type { AssistantConfig } from "./AssistantSelector";
 
 export interface ChatInterfaceProps {
@@ -42,16 +51,14 @@ export interface ChatInterfaceProps {
 const THREAD_ID_KEY = "symphony_current_thread_id";
 
 function getPersistedThreadId(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(THREAD_ID_KEY);
+  return safeGetItem(THREAD_ID_KEY);
 }
 
 function persistThreadId(threadId: string | null): void {
-  if (typeof window === "undefined") return;
   if (threadId) {
-    localStorage.setItem(THREAD_ID_KEY, threadId);
+    safeSetItem(THREAD_ID_KEY, threadId);
   } else {
-    localStorage.removeItem(THREAD_ID_KEY);
+    safeRemoveItem(THREAD_ID_KEY);
   }
 }
 
@@ -63,14 +70,42 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   // Approval state
-  const [pendingApproval, setPendingApproval] =
+  const [pendingApproval, setPendingApprovalRaw] =
     React.useState<ApprovalRequest | null>(null);
   const [isApprovalSubmitting, setIsApprovalSubmitting] = React.useState(false);
+
+  // Wrap setPendingApproval so that whenever a *new* approval request arrives
+  // we automatically clear the submitting flag.  This prevents the dialog from
+  // getting stuck in "Approving..." when the backend resumes and immediately
+  // hits another interrupt before the previous handleApprovalDecision callback
+  // has finished (race condition between SSE handler and the approval POST
+  // callback that both update pendingApproval).
+  const setPendingApproval = React.useCallback(
+    (value: React.SetStateAction<ApprovalRequest | null>) => {
+      setPendingApprovalRaw((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        // If we're setting a NEW approval request (not clearing), reset submitting state
+        if (next !== null && next !== prev) {
+          setIsApprovalSubmitting(false);
+        }
+        return next;
+      });
+    },
+    []
+  );
 
   // Sidebar state
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [todos, setTodos] = React.useState<TodoItem[]>([]);
   const [fileOps, setFileOps] = React.useState<FileOperation[]>([]);
+
+  // Artifact state
+  const [artifacts, setArtifacts] = React.useState<Map<string, Artifact>>(
+    () => new Map()
+  );
+  const [activeArtifactId, setActiveArtifactId] = React.useState<string | null>(
+    null
+  );
 
   // Assistant selector state
   const [selectedAssistant, setSelectedAssistant] =
@@ -86,6 +121,16 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   const [isMemoryOpen, setIsMemoryOpen] = React.useState(false);
   // Badge shown on the memory button when the agent saves new memories.
   const [memoryUpdated, setMemoryUpdated] = React.useState(false);
+
+  // AbortController ref for cancelling in-flight SSE streams (P1-3)
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+
+  // Cancel any active stream on unmount
+  React.useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   // Persist currentThreadId to localStorage whenever it changes
   React.useEffect(() => {
@@ -114,13 +159,41 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           role: m.role as Message["role"],
           content: m.content,
           toolCalls: m.tool_calls
-            ? Array.isArray(m.tool_calls)
-              ? m.tool_calls
-              : []
+            ? parsePersistedToolCalls(m.tool_calls)
             : undefined,
           createdAt: m.created_at,
         }));
         setMessages(loadedMessages);
+
+        // Reconstruct tasks and file ops from persisted tool calls (P1-6)
+        const restoredTasks: AgentTask[] = [];
+        const restoredFileOps: FileOperation[] = [];
+        for (const msg of loadedMessages) {
+          if (msg.toolCalls) {
+            for (const tc of msg.toolCalls) {
+              restoredTasks.push({
+                id: tc.id,
+                name: `Execute ${tc.name}`,
+                description: tc.args
+                  ? JSON.stringify(tc.args).slice(0, 100)
+                  : undefined,
+                status: tc.status === "completed" ? "completed" : "in_progress",
+                toolName: tc.name,
+                toolArgs: tc.args,
+                result: tc.result,
+                createdAt: msg.createdAt || new Date().toISOString(),
+                completedAt: tc.status === "completed" ? msg.createdAt : undefined,
+              });
+              if (isFileOperation(tc.name, tc.args)) {
+                restoredFileOps.push(
+                  extractFileOperation(tc.name, tc.args, tc.id)
+                );
+              }
+            }
+          }
+        }
+        setTasks(restoredTasks);
+        setFileOps(restoredFileOps);
       } catch (err) {
         console.error("Failed to load thread messages:", err);
         // Don't clear thread ID on network errors — user can retry
@@ -130,22 +203,26 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   React.useEffect(() => {
-    if (currentThreadId) {
+    if (currentThreadId && !isLoading) {
       loadThreadMessages(currentThreadId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentThreadId]);
+  }, [currentThreadId, isLoading]);
 
   // Handlers for ConversationSidebar
   const handleSelectThread = React.useCallback(
     (threadId: string) => {
       if (threadId === currentThreadId) return;
+      // Abort any in-flight stream (P1-3)
+      abortControllerRef.current?.abort();
       // Reset state for new thread
       setMessages([]);
       setTasks([]);
       setTodos([]);
       setFileOps([]);
       setSubAgents([]);
+      setArtifacts(new Map());
+      setActiveArtifactId(null);
       setPendingApproval(null);
       subAgentProgressRef.current.clear();
       setCurrentThreadId(threadId);
@@ -154,12 +231,16 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   const handleNewConversation = React.useCallback(() => {
+    // Abort any in-flight stream (P1-3)
+    abortControllerRef.current?.abort();
     setCurrentThreadId(null);
     setMessages([]);
     setTasks([]);
     setTodos([]);
     setFileOps([]);
     setSubAgents([]);
+    setArtifacts(new Map());
+    setActiveArtifactId(null);
     subAgentProgressRef.current.clear();
     setPendingApproval(null);
   }, []);
@@ -179,6 +260,11 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
       setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
 
+      // Abort any previous in-flight stream (P1-3)
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       // Clear sub-agents from previous turn
       setSubAgents([]);
       subAgentProgressRef.current.clear();
@@ -197,6 +283,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: content }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -231,24 +318,30 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Parse SSE events from buffer
-          const lines = buffer.split("\n");
-          buffer = "";
+          // Parse SSE events from buffer.
+          // SSE format: each event is terminated by a blank line (\n\n).
+          // We split on double-newline to get complete event blocks, keeping
+          // any trailing incomplete block as the new buffer.
+          const parts = buffer.split("\n\n");
+          // Last part may be incomplete (no trailing \n\n) — keep as buffer
+          buffer = parts.pop() ?? "";
 
-          let currentEvent = "";
-          let currentData = "";
-
-          for (const line of lines) {
-            if (line.startsWith("event: ")) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith("data: ")) {
-              currentData = line.slice(6);
-            } else if (line === "" && currentEvent && currentData) {
-              // Process complete event
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            let eventType = "";
+            let eventData = "";
+            for (const line of part.split("\n")) {
+              if (line.startsWith("event: ")) {
+                eventType = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                eventData = line.slice(6);
+              }
+            }
+            if (eventType && eventData) {
               try {
-                const data = JSON.parse(currentData);
+                const data = JSON.parse(eventData);
                 processSSEEvent(
-                  currentEvent,
+                  eventType,
                   data,
                   assistantMsgId,
                   assistantContent,
@@ -260,6 +353,8 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setTasks,
                     setTodos,
                     setFileOps,
+                    setArtifacts,
+                    setActiveArtifactId,
                     setSubAgents,
                     subAgentProgressMap: subAgentProgressRef.current,
                     setMemoryUpdated,
@@ -274,19 +369,14 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
               } catch {
                 // Skip malformed JSON
               }
-              currentEvent = "";
-              currentData = "";
-            } else if (currentEvent || currentData) {
-              // Incomplete event, put back in buffer
-              buffer =
-                (currentEvent ? `event: ${currentEvent}\n` : "") +
-                (currentData ? `data: ${currentData}\n` : "") +
-                line +
-                "\n";
             }
           }
         }
       } catch (error) {
+        // Don't show error for intentional aborts (P1-3)
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
         const errorMsg: Message = {
           id: `msg-${Date.now()}-error`,
           role: "assistant",
@@ -295,6 +385,10 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         };
         setMessages((prev) => [...prev, errorMsg]);
       } finally {
+        // Clear the controller ref if it's still the current one
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
         setIsLoading(false);
       }
     },
@@ -391,6 +485,34 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     [handleApprovalDecision]
   );
 
+  // --- Artifact handlers ---
+
+  const handleOpenArtifact = React.useCallback((artifactId: string) => {
+    setActiveArtifactId((prev) => (prev === artifactId ? null : artifactId));
+  }, []);
+
+  const handleCloseArtifact = React.useCallback(() => {
+    setActiveArtifactId(null);
+  }, []);
+
+  const handleUpdateArtifact = React.useCallback(
+    (artifactId: string, content: string) => {
+      setArtifacts((prev) => {
+        const existing = prev.get(artifactId);
+        if (!existing) return prev;
+        const updated = updateArtifactContent(existing, content, "user");
+        const next = new Map(prev);
+        next.set(artifactId, updated);
+        return next;
+      });
+    },
+    []
+  );
+
+  const activeArtifact = activeArtifactId
+    ? artifacts.get(activeArtifactId) ?? null
+    : null;
+
   return (
     <div
       className={cn("flex h-full w-full bg-background", className)}
@@ -462,7 +584,13 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         </header>
 
         {/* Message list — takes up remaining vertical space */}
-        <MessageList messages={messages} isLoading={isLoading} />
+        <MessageList
+          messages={messages}
+          isLoading={isLoading}
+          artifacts={artifacts}
+          onOpenArtifact={handleOpenArtifact}
+          activeArtifactId={activeArtifactId}
+        />
 
         {/* Sub-agent progress (above input, only when agents are active) */}
         <SubAgentProgress subAgents={subAgents} />
@@ -480,8 +608,20 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         />
       </div>
 
-      {/* Files sidebar */}
-      <FilesSidebar files={fileOps} className="hidden lg:flex" />
+      {/* Files sidebar — shown when no artifact is active */}
+      {!activeArtifact && (
+        <FilesSidebar files={fileOps} className="hidden lg:flex" />
+      )}
+
+      {/* Artifact panel — replaces files sidebar when an artifact is open */}
+      {activeArtifact && (
+        <ArtifactPanel
+          artifact={activeArtifact}
+          onUpdate={handleUpdateArtifact}
+          onClose={handleCloseArtifact}
+          className="hidden lg:flex"
+        />
+      )}
 
       {/* Approval dialog */}
       <ApprovalDialog
@@ -502,6 +642,41 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Persisted tool call parser (P1-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse tool calls from their persisted DB format back into frontend ToolCall[].
+ *
+ * The backend stores tool_calls as `{"calls": [...]}` but the frontend expects
+ * a flat array. This function handles both formats gracefully.
+ */
+function parsePersistedToolCalls(
+  raw: Record<string, unknown>
+): Message["toolCalls"] {
+  // Handle flat array
+  if (Array.isArray(raw)) {
+    return raw.map(mapPersistedToolCall);
+  }
+  // Handle {"calls": [...]} wrapper from _persist_assistant_message
+  if (raw && typeof raw === "object" && Array.isArray((raw as any).calls)) {
+    return (raw as any).calls.map(mapPersistedToolCall);
+  }
+  return [];
+}
+
+function mapPersistedToolCall(tc: any): NonNullable<Message["toolCalls"]>[number] {
+  return {
+    id: tc.id || tc.run_id || `tc-${Math.random().toString(36).slice(2)}`,
+    name: tc.name || tc.tool_name || "unknown",
+    args: tc.args || tc.tool_input || {},
+    status: "completed" as const,
+    result: tc.result,
+    runId: tc.runId || tc.run_id,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // SSE event processor
 // ---------------------------------------------------------------------------
 
@@ -514,6 +689,8 @@ interface SSEHandlers {
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
   setTodos: React.Dispatch<React.SetStateAction<TodoItem[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
+  setArtifacts: React.Dispatch<React.SetStateAction<Map<string, Artifact>>>;
+  setActiveArtifactId: React.Dispatch<React.SetStateAction<string | null>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
   setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
   /** Mutable map used to accumulate token text per subagent across progress events. */
@@ -605,6 +782,7 @@ function processSSEEvent(
           extractFileOperation(toolName, toolInput, runId),
         ]);
       }
+
       break;
     }
 
@@ -749,6 +927,50 @@ function processSSEEvent(
             : f
         )
       );
+
+      break;
+    }
+
+    case "artifact_created": {
+      const artifactRunId = data.run_id as string;
+      const artifactFilePath = data.file_path as string;
+      const artifactContent = data.content as string;
+      const artifactToolName = data.tool_name as string;
+
+      if (artifactFilePath && artifactContent) {
+        const artifactId = `artifact-${artifactRunId || Date.now()}`;
+        // Find the tool call that created this artifact
+        const matchingToolCall = currentToolCalls.find(
+          (tc) => tc.id === artifactRunId || tc.runId === artifactRunId
+        );
+        const artifact = createArtifactFromToolCall({
+          id: artifactId,
+          filePath: artifactFilePath,
+          content: artifactContent,
+          toolCallId: matchingToolCall?.id ?? artifactRunId,
+        });
+        handlers.setArtifacts((prev) => {
+          // Update existing artifact for same file path, or create new
+          const existing = Array.from(prev.values()).find(
+            (a) => a.filePath === artifactFilePath
+          );
+          const next = new Map(prev);
+          if (existing) {
+            const updated = updateArtifactContent(
+              existing,
+              artifactContent,
+              "agent"
+            );
+            updated.sourceToolCallId = matchingToolCall?.id ?? artifactRunId;
+            next.set(existing.id, updated);
+          } else {
+            next.set(artifactId, artifact);
+          }
+          return next;
+        });
+        // Auto-open the artifact panel (only if nothing is open)
+        handlers.setActiveArtifactId((prev) => prev ?? artifactId);
+      }
       break;
     }
 

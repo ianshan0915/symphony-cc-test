@@ -6,13 +6,19 @@ import { ScrollArea } from "@/components/ui/ScrollArea";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
-import type { Message } from "@/lib/types";
+import type { Message, Artifact } from "@/lib/types";
 
 export interface MessageListProps {
   /** Messages to display */
   messages: Message[];
   /** Whether the agent is currently generating a response */
   isLoading?: boolean;
+  /** Map of artifact ID → Artifact for rendering inline artifact buttons */
+  artifacts?: Map<string, Artifact>;
+  /** Called when user clicks an artifact button */
+  onOpenArtifact?: (artifactId: string) => void;
+  /** The currently open artifact ID (for highlighting) */
+  activeArtifactId?: string | null;
   /** Additional class names */
   className?: string;
 }
@@ -27,6 +33,9 @@ export interface MessageListProps {
 export function MessageList({
   messages,
   isLoading = false,
+  artifacts,
+  onOpenArtifact,
+  activeArtifactId,
   className,
 }: MessageListProps) {
   const viewportRef = React.useRef<HTMLDivElement>(null);
@@ -81,7 +90,13 @@ export function MessageList({
 
         {/* Message bubbles */}
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            artifacts={artifacts}
+            onOpenArtifact={onOpenArtifact}
+            activeArtifactId={activeArtifactId}
+          />
         ))}
 
         {/* Loading indicator */}
