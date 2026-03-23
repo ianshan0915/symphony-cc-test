@@ -42,10 +42,24 @@ describe("ChatInput", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("disables input and button when isLoading is true", () => {
+  it("disables input when isLoading is true", () => {
     render(<ChatInput onSend={jest.fn()} isLoading />);
     expect(screen.getByLabelText("Message input")).toBeDisabled();
-    expect(screen.getByLabelText("Agent is responding")).toBeDisabled();
+  });
+
+  it("shows stop button when isLoading with onStop", () => {
+    const onStop = jest.fn();
+    render(<ChatInput onSend={jest.fn()} isLoading onStop={onStop} />);
+    const stopBtn = screen.getByLabelText("Stop generating");
+    expect(stopBtn).toBeInTheDocument();
+    fireEvent.click(stopBtn);
+    expect(onStop).toHaveBeenCalled();
+  });
+
+  it("shows send button when not loading", () => {
+    render(<ChatInput onSend={jest.fn()} onStop={jest.fn()} />);
+    expect(screen.getByLabelText("Send message")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Stop generating")).not.toBeInTheDocument();
   });
 
   it("does not call onSend when input is empty", async () => {

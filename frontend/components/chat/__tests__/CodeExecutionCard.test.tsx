@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { CodeExecutionCard } from "../CodeExecutionCard";
 import type { ToolCall } from "@/lib/types";
@@ -25,9 +25,9 @@ describe("CodeExecutionCard", () => {
   // Rendering basics
   // ---------------------------------------------------------------------------
 
-  it("renders the tool name in the header", () => {
+  it("renders the human-readable label in the header", () => {
     render(<CodeExecutionCard toolCall={makeExecuteToolCall()} />);
-    expect(screen.getByText("execute")).toBeInTheDocument();
+    expect(screen.getByText(/Ran a command/)).toBeInTheDocument();
   });
 
   it("renders the code-execution-card test id", () => {
@@ -66,11 +66,11 @@ describe("CodeExecutionCard", () => {
       render(<CodeExecutionCard toolCall={makeExecuteToolCall()} />);
     });
     // Short stdout — should be visible without clicking
-    expect(screen.getByTestId("stdout-section")).toBeInTheDocument();
-    // Use a custom matcher because Testing Library normalises whitespace and
-    // newline characters can split text across DOM nodes.
+    const stdoutSection = screen.getByTestId("stdout-section");
+    expect(stdoutSection).toBeInTheDocument();
+    // Verify stdout content within the stdout section
     expect(
-      screen.getByText((content) => content.includes("hello"))
+      within(stdoutSection).getByText((content) => content.includes("hello"))
     ).toBeInTheDocument();
   });
 
@@ -136,9 +136,10 @@ describe("CodeExecutionCard", () => {
     await act(async () => {
       render(<CodeExecutionCard toolCall={makeExecuteToolCall()} />);
     });
-    expect(screen.getByTestId("stdout-section")).toBeInTheDocument();
+    const stdoutSection = screen.getByTestId("stdout-section");
+    expect(stdoutSection).toBeInTheDocument();
     expect(
-      screen.getByText((content) => content.includes("hello"))
+      within(stdoutSection).getByText((content) => content.includes("hello"))
     ).toBeInTheDocument();
   });
 
@@ -255,7 +256,7 @@ describe("CodeExecutionCard", () => {
     render(<CodeExecutionCard toolCall={makeExecuteToolCall()} />);
     expect(screen.getByRole("button")).toHaveAttribute(
       "aria-label",
-      "Code execution: execute"
+      expect.stringContaining("Code execution:")
     );
   });
 

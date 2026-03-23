@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, formatFullDateTime } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
 import {
@@ -70,6 +70,7 @@ export function ConversationSidebar({
   const [deleteTarget, setDeleteTarget] = React.useState<string | null>(null);
   const [editingThreadId, setEditingThreadId] = React.useState<string | null>(null);
   const [editTitle, setEditTitle] = React.useState("");
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const fetchThreads = React.useCallback(async () => {
     try {
@@ -198,10 +199,11 @@ export function ConversationSidebar({
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
+            ref={searchInputRef}
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search conversations..."
+            placeholder="Search conversations… ⌘K"
             className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
         </div>
@@ -363,8 +365,16 @@ function ThreadItem({
           </div>
         ) : (
           <>
-            <p className="text-xs font-medium truncate">{title}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
+            <p
+              className="text-xs font-medium line-clamp-2 leading-snug"
+              title={title}
+            >
+              {title}
+            </p>
+            <p
+              className="text-[10px] text-muted-foreground mt-0.5"
+              title={formatFullDateTime(thread.updated_at)}
+            >
               {formatRelativeTime(thread.updated_at)}
             </p>
           </>
