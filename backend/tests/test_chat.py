@@ -87,12 +87,13 @@ class TestChatStreamEndpoint:
         self,
         client: AsyncClient,
         thread_service: ThreadService,
+        test_user,
         db_session,
     ) -> None:
         """The streaming endpoint should return text/event-stream content type."""
 
-        # Create a thread first
-        thread = await thread_service.create(ThreadCreate(title="Test chat"))
+        # Create a thread first (with user_id for tenant isolation)
+        thread = await thread_service.create(ThreadCreate(title="Test chat"), user_id=test_user.id)
 
         # Mock the agent service to return a simple stream
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
@@ -254,10 +255,11 @@ class TestChatStreamEndpoint:
         self,
         client: AsyncClient,
         thread_service: ThreadService,
+        test_user,
         db_session,
     ) -> None:
         """memory_updated SSE event is emitted when AGENTS.md timestamp changes."""
-        thread = await thread_service.create(ThreadCreate(title="mem test"))
+        thread = await thread_service.create(ThreadCreate(title="mem test"), user_id=test_user.id)
 
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
             yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
@@ -297,10 +299,11 @@ class TestChatStreamEndpoint:
         self,
         client: AsyncClient,
         thread_service: ThreadService,
+        test_user,
         db_session,
     ) -> None:
         """memory_updated SSE event is NOT emitted when AGENTS.md is unchanged."""
-        thread = await thread_service.create(ThreadCreate(title="mem test 2"))
+        thread = await thread_service.create(ThreadCreate(title="mem test 2"), user_id=test_user.id)
 
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
             yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})
@@ -334,10 +337,11 @@ class TestChatStreamEndpoint:
         self,
         client: AsyncClient,
         thread_service: ThreadService,
+        test_user,
         db_session,
     ) -> None:
         """memory_updated is NOT emitted when both timestamps are None (no memory yet)."""
-        thread = await thread_service.create(ThreadCreate(title="mem test 3"))
+        thread = await thread_service.create(ThreadCreate(title="mem test 3"), user_id=test_user.id)
 
         async def mock_stream(**kwargs) -> AsyncIterator[SSEEvent]:
             yield SSEEvent(event="message_start", data={"thread_id": kwargs["thread_id"]})

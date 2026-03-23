@@ -62,9 +62,9 @@ async def thread_service(db_session: AsyncSession) -> ThreadService:
 
 
 @pytest.fixture
-async def sample_thread(db_session: AsyncSession) -> Thread:
+async def sample_thread(db_session: AsyncSession, test_user: User) -> Thread:
     """Create and return a sample thread with messages in the test DB."""
-    thread = Thread(title="Sample Thread", assistant_id="default", metadata_={})
+    thread = Thread(title="Sample Thread", assistant_id="default", metadata_={}, user_id=test_user.id)
     db_session.add(thread)
     await db_session.commit()
     await db_session.refresh(thread)

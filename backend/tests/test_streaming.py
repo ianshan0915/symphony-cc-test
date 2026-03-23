@@ -274,11 +274,18 @@ class TestStreamResponseInterrupt:
         assert result_evt.data["decision"] == "edited"
         assert result_evt.data["modified_args"] == {"query": "improved"}
 
-        # Verify the resume was called with Command containing edit info
+        # Verify the resume was called with Command containing HITLResponse
         from langgraph.types import Command
 
         assert isinstance(resume_input, Command)
-        assert resume_input.resume == {"decision": "edit", "tool_args": {"query": "improved"}}
+        assert resume_input.resume == {
+            "decisions": [
+                {
+                    "type": "edit",
+                    "edited_action": {"name": "web_search", "args": {"query": "improved"}},
+                }
+            ]
+        }
 
     @pytest.mark.asyncio
     async def test_interrupt_rejection_resumes_with_false(self) -> None:
@@ -337,11 +344,13 @@ class TestStreamResponseInterrupt:
         assert result_evt.data["decision"] == "rejected"
         assert result_evt.data["reason"] == "Not now"
 
-        # Verify the resume was called with Command(resume=False)
+        # Verify the resume was called with Command containing reject HITLResponse
         from langgraph.types import Command
 
         assert isinstance(resume_input, Command)
-        assert resume_input.resume is False
+        assert resume_input.resume == {
+            "decisions": [{"type": "reject", "message": "Not now"}]
+        }
 
     @pytest.mark.asyncio
     async def test_interrupt_with_langgraph_interrupt_object(self) -> None:
@@ -441,38 +450,46 @@ class TestStreamResponseInterrupt:
 class TestBuildResumeCommand:
     """Tests for AgentService._build_resume_command."""
 
-    def test_approve_returns_resume_true(self) -> None:
+    def test_approve_returns_hitl_response(self) -> None:
         from langgraph.types import Command
 
         cmd = AgentService._build_resume_command({"type": "approve"})
         assert isinstance(cmd, Command)
-        assert cmd.resume is True
+        assert cmd.resume == {"decisions": [{"type": "approve"}]}
 
-    def test_reject_returns_resume_false(self) -> None:
+    def test_reject_returns_hitl_response(self) -> None:
         from langgraph.types import Command
 
         cmd = AgentService._build_resume_command({"type": "reject", "reason": "no"})
         assert isinstance(cmd, Command)
-        assert cmd.resume is False
+        assert cmd.resume == {"decisions": [{"type": "reject", "message": "no"}]}
 
-    def test_edit_returns_resume_with_args(self) -> None:
+    def test_edit_returns_hitl_response_with_edited_action(self) -> None:
         from langgraph.types import Command
 
         cmd = AgentService._build_resume_command(
             {
                 "type": "edit",
+                "tool_name": "web_search",
                 "modified_args": {"query": "better"},
             }
         )
         assert isinstance(cmd, Command)
-        assert cmd.resume == {"decision": "edit", "tool_args": {"query": "better"}}
+        assert cmd.resume == {
+            "decisions": [
+                {
+                    "type": "edit",
+                    "edited_action": {"name": "web_search", "args": {"query": "better"}},
+                }
+            ]
+        }
 
     def test_unknown_type_defaults_to_reject(self) -> None:
         from langgraph.types import Command
 
         cmd = AgentService._build_resume_command({"type": "unknown"})
         assert isinstance(cmd, Command)
-        assert cmd.resume is False
+        assert cmd.resume == {"decisions": [{"type": "reject", "message": "User rejected the action"}]}
 
 
 # ---------------------------------------------------------------------------
