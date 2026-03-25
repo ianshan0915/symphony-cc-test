@@ -72,6 +72,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
           REDIS_URL: redis://localhost:6379
+          OPENAI_API_KEY: sk-test-dummy-key-for-ci
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:

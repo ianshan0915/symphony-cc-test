@@ -16,6 +16,14 @@ export function cn(...inputs: ClassValue[]): string {
 
 /**
  * Format a date to a human-readable relative time string.
+ *
+ * Rules (standardized across the app):
+ * - < 1 minute: "just now"
+ * - < 60 minutes: "Xm ago"
+ * - < 24 hours: "Xh ago"
+ * - < 7 days: "Xd ago"
+ * - < 1 year: "Mar 15"
+ * - ≥ 1 year: "Mar 15, 2025"
  */
 export function formatRelativeTime(date: Date | string): string {
   const now = new Date();
@@ -30,7 +38,31 @@ export function formatRelativeTime(date: Date | string): string {
   if (diffMin < 60) return `${diffMin}m ago`;
   if (diffHour < 24) return `${diffHour}h ago`;
   if (diffDay < 7) return `${diffDay}d ago`;
-  return d.toLocaleDateString();
+
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (sameYear) {
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/**
+ * Format a full datetime string for tooltip display.
+ */
+export function formatFullDateTime(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /**

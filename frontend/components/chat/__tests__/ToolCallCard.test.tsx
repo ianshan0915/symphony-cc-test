@@ -13,9 +13,14 @@ describe("ToolCallCard", () => {
     status: "completed",
   };
 
-  it("renders tool name", () => {
+  it("renders human-readable label", () => {
     render(<ToolCallCard toolCall={toolCall} />);
-    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText("Searched the web")).toBeInTheDocument();
+  });
+
+  it("renders detail from args", () => {
+    render(<ToolCallCard toolCall={toolCall} />);
+    expect(screen.getByText(/test query/)).toBeInTheDocument();
   });
 
   it("is collapsed by default", () => {
@@ -50,6 +55,7 @@ describe("ToolCallCard", () => {
       status: "running",
     };
     render(<ToolCallCard toolCall={runningTool} />);
+    expect(screen.getByText(/Searching the web/)).toBeInTheDocument();
     // The status icon should have animate-spin class
     const button = screen.getByRole("button");
     const svgs = button.querySelectorAll("svg");
@@ -67,5 +73,21 @@ describe("ToolCallCard", () => {
     expect(button).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows icon for known tool", () => {
+    render(<ToolCallCard toolCall={toolCall} />);
+    expect(screen.getByText("🔍")).toBeInTheDocument();
+  });
+
+  it("shows fallback label for unknown tool", () => {
+    const unknownTool: ToolCall = {
+      id: "tc-2",
+      name: "custom_tool",
+      args: {},
+      status: "completed",
+    };
+    render(<ToolCallCard toolCall={unknownTool} />);
+    expect(screen.getByText("Used custom_tool")).toBeInTheDocument();
   });
 });

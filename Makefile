@@ -1,4 +1,4 @@
-.PHONY: help up down build test lint clean ps logs backend-install backend-lint backend-test backend-run
+.PHONY: help up down build test lint clean ps logs backend-install backend-lint backend-test backend-run backend-migrate
 
 COMPOSE := docker compose
 COMPOSE_TEST := docker compose -f docker-compose.test.yml
@@ -41,6 +41,9 @@ backend-test: ## Run backend tests
 
 backend-run: ## Run backend dev server
 	cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+backend-migrate: ## Run database migrations (Alembic)
+	cd backend && uv run alembic -c db/migrations/alembic.ini upgrade head
 
 # ---------------------------------------------------------------------------
 # Aggregate targets

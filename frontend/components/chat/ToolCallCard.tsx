@@ -2,14 +2,15 @@
 
 import * as React from "react";
 import {
-  Wrench,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getToolSummary } from "@/lib/toolLabels";
 import type { ToolCall } from "@/lib/types";
 
 export interface ToolCallCardProps {
@@ -19,38 +20,24 @@ export interface ToolCallCardProps {
   className?: string;
 }
 
-/** Status badge colours */
+/** Status icon and color mappings */
 const statusConfig: Record<
   NonNullable<ToolCall["status"]>,
-  { icon: React.ElementType; color: string; label: string }
+  { icon: React.ElementType; color: string }
 > = {
-  pending: { icon: Loader2, color: "text-muted-foreground", label: "Pending" },
-  running: { icon: Loader2, color: "text-primary", label: "Running" },
-  completed: {
-    icon: CheckCircle2,
-    color: "text-green-600",
-    label: "Completed",
-  },
-  error: { icon: AlertCircle, color: "text-destructive", label: "Error" },
-  awaiting_approval: {
-    icon: AlertCircle,
-    color: "text-amber-500",
-    label: "Awaiting Approval",
-  },
-  rejected: {
-    icon: AlertCircle,
-    color: "text-destructive",
-    label: "Rejected",
-  },
+  pending: { icon: Loader2, color: "text-muted-foreground" },
+  running: { icon: Loader2, color: "text-primary" },
+  completed: { icon: CheckCircle2, color: "text-green-600" },
+  error: { icon: AlertCircle, color: "text-destructive" },
+  awaiting_approval: { icon: Clock, color: "text-amber-500" },
+  rejected: { icon: AlertCircle, color: "text-destructive" },
 };
 
 /**
- * ToolCallCard — displays a tool invocation with expandable details.
+ * ToolCallCard — displays a tool invocation with human-readable labels.
  *
- * Shows:
- * - Tool name and status icon
- * - Expandable section with arguments (JSON)
- * - Expandable section with result text
+ * Collapsed by default. Shows an icon, friendly label, and optional detail.
+ * Expandable to show raw arguments and result for power users.
  */
 export function ToolCallCard({ toolCall, className }: ToolCallCardProps) {
   const [isExpanded, setIsExpanded] = React.useState(false);
@@ -59,6 +46,12 @@ export function ToolCallCard({ toolCall, className }: ToolCallCardProps) {
   const StatusIcon = statusConfig[status].icon;
   const statusColor = statusConfig[status].color;
   const isAnimated = status === "running" || status === "pending";
+
+  const { icon, label, detail } = getToolSummary(
+    toolCall.name,
+    toolCall.args,
+    status
+  );
 
   return (
     <div
@@ -73,12 +66,24 @@ export function ToolCallCard({ toolCall, className }: ToolCallCardProps) {
         onClick={() => setIsExpanded((prev) => !prev)}
         className="flex w-full items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors text-left"
         aria-expanded={isExpanded}
-        aria-label={`Tool call: ${toolCall.name}`}
+        aria-label={`Tool call: ${label}`}
       >
-        <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <span className="font-medium text-xs truncate flex-1">
-          {toolCall.name}
+        {/* Tool icon */}
+        <span className="text-sm shrink-0" role="img" aria-hidden>
+          {icon}
         </span>
+
+        {/* Human-readable label + detail */}
+        <span className="flex-1 min-w-0">
+          <span className="font-medium text-xs">{label}</span>
+          {detail && (
+            <span className="text-xs text-muted-foreground ml-1.5">
+              · {detail}
+            </span>
+          )}
+        </span>
+
+        {/* Status icon */}
         <StatusIcon
           className={cn(
             "h-3.5 w-3.5 shrink-0",
@@ -86,6 +91,8 @@ export function ToolCallCard({ toolCall, className }: ToolCallCardProps) {
             isAnimated && "animate-spin"
           )}
         />
+
+        {/* Expand/collapse chevron */}
         {isExpanded ? (
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
         ) : (

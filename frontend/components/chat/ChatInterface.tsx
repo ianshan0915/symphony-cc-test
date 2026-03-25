@@ -5,25 +5,35 @@ import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { ApprovalDialog } from "./ApprovalDialog";
 import { AssistantSelector } from "./AssistantSelector";
-import { SubAgentProgress } from "./SubAgentProgress";
-import { TasksSidebar } from "@/components/sidebar/TasksSidebar";
-import { FilesSidebar } from "@/components/sidebar/FilesSidebar";
+// SubAgentProgress is now rendered inline within MessageList
 import { ConversationSidebar } from "@/components/sidebar/ConversationSidebar";
+import { ArtifactPanel } from "@/components/artifacts/ArtifactPanel";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { apiFetch } from "@/lib/api";
 import { UserMenu } from "@/components/UserMenu";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { MemoryModal } from "@/components/memory/MemoryModal";
-import { BookOpen } from "lucide-react";
+import { BookOpen, PanelLeftClose, PanelLeft, Square, Menu, X } from "lucide-react";
+import {
+  isArtifactProducingTool,
+  extractContentFromArgs,
+  createArtifactFromToolCall,
+  updateArtifactContent,
+} from "@/lib/artifacts";
 import type {
   Message,
   ApprovalRequest,
   AgentTask,
+  Artifact,
   FileOperation,
   SubAgent,
   ThreadDetail,
   TodoItem,
 } from "@/lib/types";
+// NOTE: AgentTask, FileOperation, TodoItem kept for SSE handler compat — sidebar display removed
+import { safeGetItem, safeSetItem, safeRemoveItem } from "@/lib/safeStorage";
+import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { AssistantConfig } from "./AssistantSelector";
 
 export interface ChatInterfaceProps {
@@ -37,21 +47,19 @@ export interface ChatInterfaceProps {
  * Manages local message state, SSE streaming from the backend, and
  * human-in-the-loop approval flow for sensitive tool calls.
  *
- * Layout: TasksSidebar | Chat | FilesSidebar
+ * Layout: ConversationSidebar (collapsible) | Chat | ArtifactPanel (on-demand)
  */
 const THREAD_ID_KEY = "symphony_current_thread_id";
 
 function getPersistedThreadId(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(THREAD_ID_KEY);
+  return safeGetItem(THREAD_ID_KEY);
 }
 
 function persistThreadId(threadId: string | null): void {
-  if (typeof window === "undefined") return;
   if (threadId) {
-    localStorage.setItem(THREAD_ID_KEY, threadId);
+    safeSetItem(THREAD_ID_KEY, threadId);
   } else {
-    localStorage.removeItem(THREAD_ID_KEY);
+    safeRemoveItem(THREAD_ID_KEY);
   }
 }
 
@@ -63,14 +71,59 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   );
 
   // Approval state
-  const [pendingApproval, setPendingApproval] =
+  const [pendingApproval, setPendingApprovalRaw] =
     React.useState<ApprovalRequest | null>(null);
   const [isApprovalSubmitting, setIsApprovalSubmitting] = React.useState(false);
 
-  // Sidebar state
+  // Wrap setPendingApproval so that whenever a *new* approval request arrives
+  // we automatically clear the submitting flag.  This prevents the dialog from
+  // getting stuck in "Approving..." when the backend resumes and immediately
+  // hits another interrupt before the previous handleApprovalDecision callback
+  // has finished (race condition between SSE handler and the approval POST
+  // callback that both update pendingApproval).
+  const setPendingApproval = React.useCallback(
+    (value: React.SetStateAction<ApprovalRequest | null>) => {
+      setPendingApprovalRaw((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        // If we're setting a NEW approval request (not clearing), reset submitting state
+        if (next !== null && next !== prev) {
+          setIsApprovalSubmitting(false);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  // Sidebar collapse state
+  const [sidebarOpen, setSidebarOpen] = React.useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = safeGetItem("symphony_sidebar_open");
+      return stored !== "false"; // default open
+    }
+    return true;
+  });
+
+  // Persist sidebar preference
+  React.useEffect(() => {
+    safeSetItem("symphony_sidebar_open", String(sidebarOpen));
+  }, [sidebarOpen]);
+
+  // Mobile drawer state
+  const [mobileDrawerOpen, setMobileDrawerOpen] = React.useState(false);
+
+  // Legacy state kept for SSE handler compatibility (data no longer displayed in sidebars)
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [todos, setTodos] = React.useState<TodoItem[]>([]);
   const [fileOps, setFileOps] = React.useState<FileOperation[]>([]);
+
+  // Artifact state
+  const [artifacts, setArtifacts] = React.useState<Map<string, Artifact>>(
+    () => new Map()
+  );
+  const [activeArtifactId, setActiveArtifactId] = React.useState<string | null>(
+    null
+  );
 
   // Assistant selector state
   const [selectedAssistant, setSelectedAssistant] =
@@ -87,6 +140,22 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   // Badge shown on the memory button when the agent saves new memories.
   const [memoryUpdated, setMemoryUpdated] = React.useState(false);
 
+  // Current tool name for contextual loading indicator (Phase 2)
+  const [currentToolName, setCurrentToolName] = React.useState<string | null>(null);
+
+  // Thread loading state for skeleton display (Phase 2)
+  const [isThreadLoading, setIsThreadLoading] = React.useState(false);
+
+  // AbortController ref for cancelling in-flight SSE streams (P1-3)
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+
+  // Cancel any active stream on unmount
+  React.useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   // Persist currentThreadId to localStorage whenever it changes
   React.useEffect(() => {
     persistThreadId(currentThreadId);
@@ -95,6 +164,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
   // Load messages for the current thread on mount or when switching threads
   const loadThreadMessages = React.useCallback(
     async (threadId: string) => {
+      setIsThreadLoading(true);
       try {
         const response = await apiFetch(
           `${config.apiUrl}/threads/${threadId}`
@@ -114,54 +184,94 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           role: m.role as Message["role"],
           content: m.content,
           toolCalls: m.tool_calls
-            ? Array.isArray(m.tool_calls)
-              ? m.tool_calls
-              : []
+            ? parsePersistedToolCalls(m.tool_calls)
             : undefined,
           createdAt: m.created_at,
         }));
         setMessages(loadedMessages);
+
+        // Reconstruct tasks and file ops from persisted tool calls (P1-6)
+        const restoredTasks: AgentTask[] = [];
+        const restoredFileOps: FileOperation[] = [];
+        for (const msg of loadedMessages) {
+          if (msg.toolCalls) {
+            for (const tc of msg.toolCalls) {
+              restoredTasks.push({
+                id: tc.id,
+                name: `Execute ${tc.name}`,
+                description: tc.args
+                  ? JSON.stringify(tc.args).slice(0, 100)
+                  : undefined,
+                status: tc.status === "completed" ? "completed" : "in_progress",
+                toolName: tc.name,
+                toolArgs: tc.args,
+                result: tc.result,
+                createdAt: msg.createdAt || new Date().toISOString(),
+                completedAt: tc.status === "completed" ? msg.createdAt : undefined,
+              });
+              if (isFileOperation(tc.name, tc.args)) {
+                restoredFileOps.push(
+                  extractFileOperation(tc.name, tc.args, tc.id)
+                );
+              }
+            }
+          }
+        }
+        setTasks(restoredTasks);
+        setFileOps(restoredFileOps);
       } catch (err) {
         console.error("Failed to load thread messages:", err);
         // Don't clear thread ID on network errors — user can retry
+      } finally {
+        setIsThreadLoading(false);
       }
     },
     []
   );
 
   React.useEffect(() => {
-    if (currentThreadId) {
+    if (currentThreadId && !isLoading) {
       loadThreadMessages(currentThreadId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentThreadId]);
+  }, [currentThreadId, isLoading]);
 
   // Handlers for ConversationSidebar
   const handleSelectThread = React.useCallback(
     (threadId: string) => {
       if (threadId === currentThreadId) return;
+      // Abort any in-flight stream (P1-3)
+      abortControllerRef.current?.abort();
       // Reset state for new thread
       setMessages([]);
       setTasks([]);
       setTodos([]);
       setFileOps([]);
       setSubAgents([]);
+      setArtifacts(new Map());
+      setActiveArtifactId(null);
       setPendingApproval(null);
       subAgentProgressRef.current.clear();
       setCurrentThreadId(threadId);
+      setMobileDrawerOpen(false);
     },
     [currentThreadId]
   );
 
   const handleNewConversation = React.useCallback(() => {
+    // Abort any in-flight stream (P1-3)
+    abortControllerRef.current?.abort();
     setCurrentThreadId(null);
     setMessages([]);
     setTasks([]);
     setTodos([]);
     setFileOps([]);
     setSubAgents([]);
+    setArtifacts(new Map());
+    setActiveArtifactId(null);
     subAgentProgressRef.current.clear();
     setPendingApproval(null);
+    setMobileDrawerOpen(false);
   }, []);
 
   /**
@@ -178,6 +288,11 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
       setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
+
+      // Abort any previous in-flight stream (P1-3)
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
       // Clear sub-agents from previous turn
       setSubAgents([]);
@@ -197,6 +312,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: content }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -231,24 +347,30 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Parse SSE events from buffer
-          const lines = buffer.split("\n");
-          buffer = "";
+          // Parse SSE events from buffer.
+          // SSE format: each event is terminated by a blank line (\n\n).
+          // We split on double-newline to get complete event blocks, keeping
+          // any trailing incomplete block as the new buffer.
+          const parts = buffer.split("\n\n");
+          // Last part may be incomplete (no trailing \n\n) — keep as buffer
+          buffer = parts.pop() ?? "";
 
-          let currentEvent = "";
-          let currentData = "";
-
-          for (const line of lines) {
-            if (line.startsWith("event: ")) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith("data: ")) {
-              currentData = line.slice(6);
-            } else if (line === "" && currentEvent && currentData) {
-              // Process complete event
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            let eventType = "";
+            let eventData = "";
+            for (const line of part.split("\n")) {
+              if (line.startsWith("event: ")) {
+                eventType = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                eventData = line.slice(6);
+              }
+            }
+            if (eventType && eventData) {
               try {
-                const data = JSON.parse(currentData);
+                const data = JSON.parse(eventData);
                 processSSEEvent(
-                  currentEvent,
+                  eventType,
                   data,
                   assistantMsgId,
                   assistantContent,
@@ -260,9 +382,12 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                     setTasks,
                     setTodos,
                     setFileOps,
+                    setArtifacts,
+                    setActiveArtifactId,
                     setSubAgents,
                     subAgentProgressMap: subAgentProgressRef.current,
                     setMemoryUpdated,
+                    setCurrentToolName,
                     updateAssistantContent: (newContent: string) => {
                       assistantContent = newContent;
                     },
@@ -274,19 +399,14 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
               } catch {
                 // Skip malformed JSON
               }
-              currentEvent = "";
-              currentData = "";
-            } else if (currentEvent || currentData) {
-              // Incomplete event, put back in buffer
-              buffer =
-                (currentEvent ? `event: ${currentEvent}\n` : "") +
-                (currentData ? `data: ${currentData}\n` : "") +
-                line +
-                "\n";
             }
           }
         }
       } catch (error) {
+        // Don't show error for intentional aborts (P1-3)
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
         const errorMsg: Message = {
           id: `msg-${Date.now()}-error`,
           role: "assistant",
@@ -295,6 +415,10 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         };
         setMessages((prev) => [...prev, errorMsg]);
       } finally {
+        // Clear the controller ref if it's still the current one
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
         setIsLoading(false);
       }
     },
@@ -391,26 +515,186 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     [handleApprovalDecision]
   );
 
+  // --- Artifact handlers ---
+
+  const handleOpenArtifact = React.useCallback((artifactId: string) => {
+    setActiveArtifactId((prev) => (prev === artifactId ? null : artifactId));
+  }, []);
+
+  const handleCloseArtifact = React.useCallback(() => {
+    setActiveArtifactId(null);
+  }, []);
+
+  const handleUpdateArtifact = React.useCallback(
+    (artifactId: string, content: string) => {
+      setArtifacts((prev) => {
+        const existing = prev.get(artifactId);
+        if (!existing) return prev;
+        const updated = updateArtifactContent(existing, content, "user");
+        const next = new Map(prev);
+        next.set(artifactId, updated);
+        return next;
+      });
+    },
+    []
+  );
+
+  const activeArtifact = activeArtifactId
+    ? artifacts.get(activeArtifactId) ?? null
+    : null;
+
+  // Keyboard shortcuts
+  const handleFocusSearch = React.useCallback(() => {
+    // Focus the search input in the conversation sidebar
+    const searchInput = document.querySelector<HTMLInputElement>(
+      'aside input[placeholder*="Search"]'
+    );
+    if (searchInput) {
+      // Open sidebar if collapsed
+      setSidebarOpen(true);
+      // Small delay to allow sidebar animation
+      setTimeout(() => searchInput.focus(), 100);
+    }
+  }, []);
+
+  useKeyboardShortcuts({
+    onFocusSearch: handleFocusSearch,
+    onNewConversation: handleNewConversation,
+    onEscape: React.useCallback(() => {
+      // Close mobile drawer if open
+      if (mobileDrawerOpen) {
+        setMobileDrawerOpen(false);
+        return;
+      }
+      // Close artifact panel if open
+      if (activeArtifactId) {
+        setActiveArtifactId(null);
+        return;
+      }
+      // Close memory modal if open
+      if (isMemoryOpen) {
+        setIsMemoryOpen(false);
+        return;
+      }
+    }, [mobileDrawerOpen, activeArtifactId, isMemoryOpen]),
+  });
+
+  // Stop generation handler
+  const handleStop = React.useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsLoading(false);
+  }, []);
+
+  /**
+   * Retry handler — re-sends the user message that preceded the target
+   * assistant message and replaces the response.
+   */
+  const handleRetry = React.useCallback(
+    (messageId: string) => {
+      // Find the assistant message being retried
+      const msgIndex = messages.findIndex((m) => m.id === messageId);
+      if (msgIndex < 0) return;
+
+      // Find the preceding user message
+      let userContent = "";
+      for (let i = msgIndex - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          userContent = messages[i].content;
+          break;
+        }
+      }
+      if (!userContent) return;
+
+      // Remove the assistant message being retried (and any after it)
+      setMessages((prev) => prev.slice(0, msgIndex));
+
+      // Re-send
+      handleSend(userContent);
+    },
+    [messages, handleSend]
+  );
+
   return (
     <div
       className={cn("flex h-full w-full bg-background", className)}
     >
-      {/* Conversation history sidebar */}
-      <ConversationSidebar
-        currentThreadId={currentThreadId}
-        onSelectThread={handleSelectThread}
-        onNewConversation={handleNewConversation}
-        className="hidden lg:flex"
-      />
+      {/* Mobile sidebar drawer — slide-over with backdrop */}
+      {mobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 transition-opacity"
+            onClick={() => setMobileDrawerOpen(false)}
+            aria-hidden
+          />
+          {/* Drawer */}
+          <div className="absolute inset-y-0 left-0 w-72 animate-in slide-in-from-left duration-300">
+            <div className="relative h-full">
+              <ConversationSidebar
+                currentThreadId={currentThreadId}
+                onSelectThread={handleSelectThread}
+                onNewConversation={handleNewConversation}
+                className="h-full"
+              />
+              {/* Close button */}
+              <button
+                type="button"
+                onClick={() => setMobileDrawerOpen(false)}
+                className="absolute top-3 right-3 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                aria-label="Close sidebar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Tasks sidebar */}
-      <TasksSidebar tasks={tasks} todos={todos} className="hidden lg:flex" />
+      {/* Conversation history sidebar — collapsible (desktop only) */}
+      <div
+        className={cn(
+          "hidden lg:flex transition-all duration-300 ease-in-out overflow-hidden",
+          sidebarOpen ? "w-64" : "w-0"
+        )}
+      >
+        <ConversationSidebar
+          currentThreadId={currentThreadId}
+          onSelectThread={handleSelectThread}
+          onNewConversation={handleNewConversation}
+          className="w-64 shrink-0"
+        />
+      </div>
 
       {/* Main chat area */}
-      <div className="flex flex-col h-full flex-1 max-w-3xl mx-auto">
+      <div className="flex flex-col h-full flex-1 min-w-0">
         {/* Header */}
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="flex items-center gap-3">
+        <header className="flex items-center justify-between border-b border-border px-3 py-3 sm:px-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Mobile hamburger button */}
+            <button
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="lg:hidden flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+              aria-label="Open conversations"
+              title="Open conversations"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+            {/* Desktop sidebar toggle button */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((prev) => !prev)}
+              className="hidden lg:flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeft className="h-4 w-4" />
+              )}
+            </button>
             <div>
               <h1 className="text-base font-semibold">Symphony Chat</h1>
               <p className="text-xs text-muted-foreground">
@@ -457,21 +741,31 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                 />
               )}
             </button>
+            <ThemeToggle />
             <UserMenu />
           </div>
         </header>
 
         {/* Message list — takes up remaining vertical space */}
-        <MessageList messages={messages} isLoading={isLoading} />
-
-        {/* Sub-agent progress (above input, only when agents are active) */}
-        <SubAgentProgress subAgents={subAgents} />
+        <MessageList
+          messages={messages}
+          isLoading={isLoading}
+          isThreadLoading={isThreadLoading}
+          currentToolName={currentToolName}
+          subAgents={subAgents}
+          artifacts={artifacts}
+          onOpenArtifact={handleOpenArtifact}
+          activeArtifactId={activeArtifactId}
+          onSend={handleSend}
+          onRetry={handleRetry}
+        />
 
         {/* Input area */}
         <ChatInput
           onSend={handleSend}
           isLoading={isLoading}
           disabled={!!pendingApproval}
+          onStop={handleStop}
           placeholder={
             pendingApproval
               ? "Waiting for approval decision..."
@@ -480,8 +774,15 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         />
       </div>
 
-      {/* Files sidebar */}
-      <FilesSidebar files={fileOps} className="hidden lg:flex" />
+      {/* Artifact panel — slides in on demand */}
+      {activeArtifact && (
+        <ArtifactPanel
+          artifact={activeArtifact}
+          onUpdate={handleUpdateArtifact}
+          onClose={handleCloseArtifact}
+          className="hidden lg:flex"
+        />
+      )}
 
       {/* Approval dialog */}
       <ApprovalDialog
@@ -502,6 +803,41 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Persisted tool call parser (P1-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse tool calls from their persisted DB format back into frontend ToolCall[].
+ *
+ * The backend stores tool_calls as `{"calls": [...]}` but the frontend expects
+ * a flat array. This function handles both formats gracefully.
+ */
+function parsePersistedToolCalls(
+  raw: Record<string, unknown>
+): Message["toolCalls"] {
+  // Handle flat array
+  if (Array.isArray(raw)) {
+    return raw.map(mapPersistedToolCall);
+  }
+  // Handle {"calls": [...]} wrapper from _persist_assistant_message
+  if (raw && typeof raw === "object" && Array.isArray((raw as any).calls)) {
+    return (raw as any).calls.map(mapPersistedToolCall);
+  }
+  return [];
+}
+
+function mapPersistedToolCall(tc: any): NonNullable<Message["toolCalls"]>[number] {
+  return {
+    id: tc.id || tc.run_id || `tc-${Math.random().toString(36).slice(2)}`,
+    name: tc.name || tc.tool_name || "unknown",
+    args: tc.args || tc.tool_input || {},
+    status: "completed" as const,
+    result: tc.result,
+    runId: tc.runId || tc.run_id,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // SSE event processor
 // ---------------------------------------------------------------------------
 
@@ -514,8 +850,11 @@ interface SSEHandlers {
   setTasks: React.Dispatch<React.SetStateAction<AgentTask[]>>;
   setTodos: React.Dispatch<React.SetStateAction<TodoItem[]>>;
   setFileOps: React.Dispatch<React.SetStateAction<FileOperation[]>>;
+  setArtifacts: React.Dispatch<React.SetStateAction<Map<string, Artifact>>>;
+  setActiveArtifactId: React.Dispatch<React.SetStateAction<string | null>>;
   setSubAgents: React.Dispatch<React.SetStateAction<SubAgent[]>>;
   setMemoryUpdated: React.Dispatch<React.SetStateAction<boolean>>;
+  setCurrentToolName: React.Dispatch<React.SetStateAction<string | null>>;
   /** Mutable map used to accumulate token text per subagent across progress events. */
   subAgentProgressMap: Map<string, string>;
   updateAssistantContent: (content: string) => void;
@@ -565,6 +904,9 @@ function processSSEEvent(
       const toolInput = data.tool_input as Record<string, unknown>;
       const runId = data.run_id as string;
 
+      // Track current tool name for contextual loading indicator
+      handlers.setCurrentToolName(toolName);
+
       const newToolCall = {
         id: runId || `tc-${Date.now()}`,
         name: toolName,
@@ -605,6 +947,7 @@ function processSSEEvent(
           extractFileOperation(toolName, toolInput, runId),
         ]);
       }
+
       break;
     }
 
@@ -616,6 +959,9 @@ function processSSEEvent(
         toolArgs: (data.tool_args as Record<string, unknown>) ?? {},
         runId: data.run_id as string,
         createdAt: new Date().toISOString(),
+        additionalTools: data.additional_tools as
+          | Array<{ name: string; args: Record<string, unknown> }>
+          | undefined,
       };
 
       handlers.setPendingApproval(approvalRequest);
@@ -699,6 +1045,9 @@ function processSSEEvent(
       const runId = data.run_id as string;
       const output = data.output as string;
 
+      // Clear current tool name (tool finished)
+      handlers.setCurrentToolName(null);
+
       // Update the matching tool call with the result
       // Match by id, name, or runId (needed for approval-required tools whose id is the approval_id)
       const updatedCalls = currentToolCalls.map((tc) =>
@@ -749,10 +1098,57 @@ function processSSEEvent(
             : f
         )
       );
+
+      break;
+    }
+
+    case "artifact_created": {
+      const artifactRunId = data.run_id as string;
+      const artifactFilePath = data.file_path as string;
+      const artifactContent = data.content as string;
+      const artifactToolName = data.tool_name as string;
+
+      if (artifactFilePath && artifactContent) {
+        const artifactId = `artifact-${artifactRunId || Date.now()}`;
+        // Find the tool call that created this artifact
+        const matchingToolCall = currentToolCalls.find(
+          (tc) => tc.id === artifactRunId || tc.runId === artifactRunId
+        );
+        const artifact = createArtifactFromToolCall({
+          id: artifactId,
+          filePath: artifactFilePath,
+          content: artifactContent,
+          toolCallId: matchingToolCall?.id ?? artifactRunId,
+        });
+        handlers.setArtifacts((prev) => {
+          // Update existing artifact for same file path, or create new
+          const existing = Array.from(prev.values()).find(
+            (a) => a.filePath === artifactFilePath
+          );
+          const next = new Map(prev);
+          if (existing) {
+            const updated = updateArtifactContent(
+              existing,
+              artifactContent,
+              "agent"
+            );
+            updated.sourceToolCallId = matchingToolCall?.id ?? artifactRunId;
+            next.set(existing.id, updated);
+          } else {
+            next.set(artifactId, artifact);
+          }
+          return next;
+        });
+        // Auto-open the artifact panel (only if nothing is open)
+        handlers.setActiveArtifactId((prev) => prev ?? artifactId);
+      }
       break;
     }
 
     case "message_end": {
+      // Clear current tool name at end of message
+      handlers.setCurrentToolName(null);
+
       const content = data.content as string;
       // Runtime guard: only accept plain objects; reject strings, numbers, arrays, null.
       const rawStructured = data.structured_response;

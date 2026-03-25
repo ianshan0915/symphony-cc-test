@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -22,6 +22,9 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     assistant_id: Mapped[str] = mapped_column(String(100), nullable=False, default="default")
     metadata_: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
@@ -88,6 +91,7 @@ class ThreadOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
     title: Optional[str]
     assistant_id: str
     metadata: Dict[str, Any] = Field(default_factory=dict, alias="metadata_")

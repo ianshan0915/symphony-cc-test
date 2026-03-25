@@ -40,6 +40,8 @@ export interface ApprovalRequest {
   runId: string;
   /** Timestamp of the request */
   createdAt: string;
+  /** Additional tool calls requiring approval in the same turn (when LLM generates multiple) */
+  additionalTools?: Array<{ name: string; args: Record<string, unknown> }>;
 }
 
 /** User's decision on an approval request */
@@ -181,4 +183,56 @@ export interface FileOperation {
   status: "pending" | "completed" | "failed";
   timestamp: string;
   preview?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+/** Content type of an artifact */
+export type ArtifactType =
+  | "code"
+  | "document"
+  | "markdown"
+  | "html"
+  | "csv"
+  | "json"
+  | "text";
+
+/** A single version snapshot of an artifact's content */
+export interface ArtifactVersion {
+  content: string;
+  timestamp: string;
+  /** What produced this version: agent tool call or user edit */
+  source: "agent" | "user";
+}
+
+/**
+ * An artifact produced or modified by the agent (or user).
+ *
+ * Artifacts are created when the agent writes/creates files, generates
+ * documents, or produces structured output.  They are displayed in a
+ * dedicated panel alongside the chat for viewing and editing.
+ */
+export interface Artifact {
+  /** Stable identifier (usually the tool-call run_id) */
+  id: string;
+  /** Display title — typically the filename or a generated title */
+  title: string;
+  /** Current content (latest version) */
+  content: string;
+  /** Detected or declared content type */
+  type: ArtifactType;
+  /** Programming language hint for syntax highlighting (e.g. "python", "typescript") */
+  language?: string;
+  /** Original file path when the artifact was created from a file tool */
+  filePath?: string;
+  /** Version history — latest version last */
+  versions: ArtifactVersion[];
+  /** ISO timestamp of creation */
+  createdAt: string;
+  /** ISO timestamp of last update */
+  updatedAt: string;
+  /** The tool-call ID that created this artifact */
+  sourceToolCallId?: string;
 }

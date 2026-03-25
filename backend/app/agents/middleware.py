@@ -124,22 +124,18 @@ async def setup_persistent_backends() -> None:
     conn_string = settings.database_url_psycopg
 
     # --- Store ---
-    try:
-        from langgraph.store.postgres import AsyncPostgresStore
-
-        store = AsyncPostgresStore.from_conn_string(conn_string)
-        # __aenter__ opens the connection pool
-        _memory_store = await store.__aenter__()
-        await _memory_store.setup()
-        _using_persistent_store = True
-        logger.info("Persistent AsyncPostgresStore initialised")
-    except Exception:
-        logger.warning(
-            "Failed to initialise AsyncPostgresStore — falling back to InMemoryStore",
-            exc_info=True,
-        )
-        _memory_store = InMemoryStore()
-        _using_persistent_store = False
+    # NOTE: AsyncPostgresStore is incompatible with deepagents' sync
+    # StoreBackend.download_files() which calls store.get() synchronously
+    # from a worker thread via asyncio.to_thread().  The async pool's
+    # connection cannot be used from a different thread, causing
+    # "psycopg.OperationalError: the connection is closed".
+    # Using InMemoryStore until deepagents uses async store access
+    # throughout.  Memory persists within the process lifetime but is
+    # lost on restart.
+    # TODO: Fix upstream in deepagents or use a thread-safe sync wrapper.
+    logger.info("Using InMemoryStore (workaround for deepagents sync/async store incompatibility)")
+    _memory_store = InMemoryStore()
+    _using_persistent_store = False
 
     # Seed the default AGENTS.md content if it does not exist yet
     await _seed_agents_md_if_missing()

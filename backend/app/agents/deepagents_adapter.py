@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
+import time
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from app.services.sse import SSEEvent
 
@@ -42,12 +44,26 @@ _FILESYSTEM_TOOL_NAMES: frozenset[str] = frozenset(
         "ls",
         "read_file",
         "write_file",
+        "create_file",
         "edit_file",
         "glob",
         "grep",
         "execute",
     }
 )
+
+# Tools that produce artifacts (files with user-visible content).
+_ARTIFACT_WRITE_TOOLS: frozenset[str] = frozenset({"write_file", "create_file", "edit_file"})
+
+# File extensions that should be auto-detected as artifacts when produced
+# by code execution.  These are "viewable" formats the frontend can render.
+_EXECUTE_ARTIFACT_EXTENSIONS: frozenset[str] = frozenset(
+    {".html", ".htm", ".svg", ".csv", ".json", ".md"}
+)
+
+# Maximum file size (bytes) to inline as an artifact from execute output.
+# Larger files are skipped to avoid bloating the SSE stream.
+_EXECUTE_ARTIFACT_MAX_SIZE: int = 10 * 1024 * 1024  # 10 MB
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +136,113 @@ def _parse_execute_result(content: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Execute artifact scanner
+# ---------------------------------------------------------------------------
+
+# Track files already emitted as artifacts (by mtime) to avoid duplicates
+# across multiple execute calls in the same session.
+_emitted_artifact_files: dict[str, float] = {}
+
+
+def _scan_execute_artifacts(run_id: str) -> list[SSEEvent]:
+    """Scan the sandbox workspace for output files produced by code execution.
+
+    After a successful ``execute`` tool call, this function checks the sandbox
+    workspace directory for recently created/modified files with viewable
+    extensions (e.g. ``.html``, ``.svg``, ``.csv``).  For each new file found,
+    an ``artifact_created`` SSE event is emitted so the frontend can display
+    them in the artifact panel.
+
+    This bridges the gap between files written via ``write_file`` (which already
+    produce artifacts) and files generated as side effects of code execution
+    (e.g. a Python script that generates an HTML dashboard).
+
+    Parameters
+    ----------
+    run_id:
+        The run_id of the execute tool call, used to tag the artifact events.
+
+    Returns
+    -------
+    list[SSEEvent]
+        Zero or more ``artifact_created`` events for newly detected files.
+    """
+    from app.config import settings
+
+    workspace = settings.sandbox_workspace_dir
+    if not os.path.isdir(workspace):
+        return []
+
+    events: list[SSEEvent] = []
+    now = time.time()
+    # Only consider files modified within the last 60 seconds
+    recency_threshold = 60.0
+
+    try:
+        for entry in os.scandir(workspace):
+            if not entry.is_file():
+                continue
+
+            _, ext = os.path.splitext(entry.name.lower())
+            if ext not in _EXECUTE_ARTIFACT_EXTENSIONS:
+                continue
+
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue
+
+            # Skip files that are too old (not from this execution)
+            if now - stat.st_mtime > recency_threshold:
+                continue
+
+            # Skip files that are too large
+            if stat.st_size > _EXECUTE_ARTIFACT_MAX_SIZE:
+                logger.debug(
+                    "Skipping large execute artifact %s (%d bytes)",
+                    entry.name,
+                    stat.st_size,
+                )
+                continue
+
+            # Skip files we've already emitted (same path and mtime)
+            prev_mtime = _emitted_artifact_files.get(entry.path)
+            if prev_mtime is not None and prev_mtime >= stat.st_mtime:
+                continue
+
+            # Read the file content
+            try:
+                with open(entry.path, encoding="utf-8", errors="replace") as f:
+                    file_content = f.read()
+            except OSError:
+                continue
+
+            _emitted_artifact_files[entry.path] = stat.st_mtime
+
+            events.append(
+                SSEEvent(
+                    event="artifact_created",
+                    data={
+                        "run_id": run_id,
+                        "tool_name": "execute",
+                        "file_path": entry.name,
+                        "content": file_content,
+                    },
+                )
+            )
+            logger.info(
+                "Execute artifact detected: %s (%d bytes)",
+                entry.name,
+                stat.st_size,
+            )
+
+    except OSError:
+        logger.debug("Failed to scan sandbox workspace for execute artifacts", exc_info=True)
+
+    return events
+
+
+# ---------------------------------------------------------------------------
 # Message-mode mapping
 # ---------------------------------------------------------------------------
 
@@ -178,7 +301,10 @@ def map_message_chunk(
 # ---------------------------------------------------------------------------
 
 
-def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
+def map_state_update(
+    update: dict[str, Any],
+    pending_tool_calls: dict[str, dict[str, Any]] | None = None,
+) -> list[SSEEvent]:
     """Map a LangGraph *updates*-mode payload to zero or more SSE events.
 
     Handles two event types:
@@ -208,7 +334,16 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         messages: list[Any] = []
         if isinstance(node_output, dict):
-            messages = node_output.get("messages", [])
+            raw_messages = node_output.get("messages", [])
+            # deepagents may wrap messages in a LangGraph ``Overwrite``
+            # container (e.g. ``Overwrite(value=[...])``) when replacing
+            # state.  Unwrap to get the underlying list.
+            if hasattr(raw_messages, "value"):
+                messages = raw_messages.value if isinstance(raw_messages.value, list) else []
+            elif isinstance(raw_messages, list):
+                messages = raw_messages
+            else:
+                messages = []
 
             # Detect a summarization event emitted by SummarizationMiddleware.
             # The middleware stores the event under the private state key
@@ -238,6 +373,20 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
 
         elif isinstance(node_output, list):
             messages = node_output
+
+        # Accumulate tool_call_id → args from AIMessages across updates.
+        # AIMessages with tool_calls appear in the "agent" node update,
+        # while the corresponding ToolMessages appear later in the "tools"
+        # node update.  By accumulating into `pending_tool_calls` we can
+        # look up the original args when processing tool results.
+        if pending_tool_calls is None:
+            pending_tool_calls = {}
+        for msg in messages:
+            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                for tc in msg.tool_calls:
+                    tc_id = tc.get("id", "")
+                    if tc_id:
+                        pending_tool_calls[tc_id] = tc.get("args", {})
 
         for msg in messages:
             if isinstance(msg, ToolMessage):
@@ -276,6 +425,13 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                         )
                     )
 
+                    # Scan the sandbox workspace for output files produced by
+                    # the execute command (e.g. HTML dashboards, CSV exports).
+                    # Only emit artifacts for successful executions.
+                    if parsed.get("exit_code", -1) == 0:
+                        for artifact_event in _scan_execute_artifacts(run_id):
+                            events.append(artifact_event)
+
                 # With CompositeBackend, deepagents offloads large tool
                 # outputs to the filesystem automatically (returning a
                 # pointer instead of inline content).  The blunt 2K
@@ -289,6 +445,31 @@ def map_state_update(update: dict[str, Any]) -> list[SSEEvent]:
                         },
                     )
                 )
+
+                # For artifact-producing tools (write/create/edit), emit an
+                # ``artifact_created`` event with the file path and content
+                # so the frontend can display the artifact in the panel.
+                if tool_name in _ARTIFACT_WRITE_TOOLS:
+                    original_args = pending_tool_calls.get(run_id, {})
+                    file_path = original_args.get("file_path") or original_args.get("path") or ""
+                    file_content = (
+                        original_args.get("content")
+                        or original_args.get("new_content")
+                        or original_args.get("text")
+                        or ""
+                    )
+                    if file_path and file_content:
+                        events.append(
+                            SSEEvent(
+                                event="artifact_created",
+                                data={
+                                    "run_id": run_id,
+                                    "tool_name": tool_name,
+                                    "file_path": file_path,
+                                    "content": file_content,
+                                },
+                            )
+                        )
 
     return events
 
@@ -402,6 +583,43 @@ def extract_interrupt(update: dict[str, Any]) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         value = {"data": value}
+
+    # HumanInTheLoopMiddleware emits HITLRequest with action_requests and
+    # review_configs.  Normalise to the tool_name/tool_args format expected
+    # by the SSE layer.
+    #
+    # IMPORTANT: The LLM may generate *multiple* tool calls in a single turn
+    # that all require approval.  We must track ALL of them so the resume
+    # command sends back one decision per tool call (the middleware enforces
+    # decisions.length == action_requests.length).
+    action_requests = value.get("action_requests")
+    if action_requests and isinstance(action_requests, list) and len(action_requests) > 0:
+        first_action = action_requests[0]
+        tool_name = first_action.get("name", "unknown")
+        tool_args = first_action.get("args", {})
+        # Extract allowed_decisions from review_configs
+        review_configs = value.get("review_configs", [])
+        allowed_decisions = (
+            review_configs[0].get("allowed_decisions", ["approve", "reject"])
+            if review_configs
+            else ["approve", "reject"]
+        )
+        # Build per-action list so the resume handler can generate one
+        # decision per pending tool call.
+        all_actions = [
+            {
+                "name": ar.get("name", "unknown"),
+                "args": ar.get("args", {}),
+            }
+            for ar in action_requests
+        ]
+        return {
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "allowed_decisions": allowed_decisions,
+            "action_requests": all_actions,
+            "action_count": len(all_actions),
+        }
 
     return value
 

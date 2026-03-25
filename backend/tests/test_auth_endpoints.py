@@ -24,14 +24,22 @@ from app.models.user import User
 @pytest.fixture
 async def auth_client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     """HTTP client with DB override but NO auth override (real JWT flow)."""
+    from app.config import settings
 
     async def _override_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db_session] = _override_db_session
+
+    # Ensure debug mode is off so unauthenticated requests are properly rejected
+    original_debug = settings.debug
+    settings.debug = False
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+    settings.debug = original_debug
     app.dependency_overrides.clear()
 
 

@@ -6,6 +6,7 @@
  */
 
 import { config } from "./config";
+import { safeGetItem, safeSetItem, safeRemoveItem } from "./safeStorage";
 
 const TOKEN_KEY = "symphony_token";
 
@@ -14,16 +15,15 @@ const TOKEN_KEY = "symphony_token";
 // ---------------------------------------------------------------------------
 
 export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
+  return safeGetItem(TOKEN_KEY);
 }
 
 export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  safeSetItem(TOKEN_KEY, token);
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  safeRemoveItem(TOKEN_KEY);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +109,23 @@ export async function apiFetch(
     ...init,
     headers,
   });
+
+  // Handle rate limit (429) with user-friendly message (P2-10)
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("Retry-After");
+    const waitSeconds = retryAfter ? parseInt(retryAfter, 10) : null;
+    const detail = await response.json().catch(() => ({}));
+    const message =
+      waitSeconds && !isNaN(waitSeconds)
+        ? `Too many requests — please wait ${waitSeconds} seconds and try again.`
+        : detail?.detail || "Too many requests — please slow down and try again.";
+    // Return a synthetic response so callers can detect and display the message
+    return new Response(JSON.stringify({ detail: message }), {
+      status: 429,
+      statusText: "Too Many Requests",
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   if (response.status === 401) {
     // Don't try to refresh if this request was itself a refresh call

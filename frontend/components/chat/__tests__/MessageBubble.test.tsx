@@ -62,7 +62,7 @@ describe("MessageBubble", () => {
     };
 
     render(<MessageBubble message={messageWithTools} />);
-    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText("Searched the web")).toBeInTheDocument();
   });
 
   it("displays timestamp when createdAt is provided", () => {
@@ -171,7 +171,7 @@ describe("MessageBubble", () => {
     render(<MessageBubble message={messageWithTool} />);
     // CodeExecutionCard must NOT be rendered for non-execute tools
     expect(screen.queryByTestId("code-execution-card")).not.toBeInTheDocument();
-    // ToolCallCard renders the tool name in its header
-    expect(screen.getByText("web_search")).toBeInTheDocument();
+    // ToolCallCard renders the human-readable label
+    expect(screen.getByText("Searched the web")).toBeInTheDocument();
   });
 });

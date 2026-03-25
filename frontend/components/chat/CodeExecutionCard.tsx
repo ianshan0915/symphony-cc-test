@@ -11,6 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getToolSummary } from "@/lib/toolLabels";
 import type { ToolCall } from "@/lib/types";
 
 export interface CodeExecutionCardProps {
@@ -157,6 +158,12 @@ export function CodeExecutionCard({
 
   const exitBadge = execution != null ? getExitBadgeConfig(execution.exitCode) : null;
 
+  const { icon, label, detail } = getToolSummary(
+    toolCall.name,
+    toolCall.args,
+    status
+  );
+
   return (
     <div
       className={cn(
@@ -171,11 +178,14 @@ export function CodeExecutionCard({
         onClick={() => setIsExpanded((prev) => !prev)}
         className="flex w-full items-center gap-2 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 transition-colors text-left"
         aria-expanded={isExpanded}
-        aria-label={`Code execution: ${toolCall.name}`}
+        aria-label={`Code execution: ${label}`}
       >
         <Terminal className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
         <span className="font-medium text-xs truncate flex-1 text-zinc-200">
-          {toolCall.name}
+          {label}
+          {detail && (
+            <span className="text-zinc-400 font-normal ml-1.5">· {detail}</span>
+          )}
         </span>
 
         {/* Status indicator */}

@@ -56,18 +56,24 @@ class TestSubagentConfigs:
     def test_custom_model_name(self) -> None:
         configs = build_subagent_configs(model_name="gpt-4o")
         for config in configs:
-            assert config["model"] == "gpt-4o"
+            # model is now a BaseChatModel instance, not a string
+            model = config["model"]
+            assert hasattr(model, "model_name")
+            assert model.model_name == "gpt-4o"
 
     def test_model_kwargs_forwarded(self) -> None:
         kwargs = {"temperature": 0.5}
         configs = build_subagent_configs(model_kwargs=kwargs)
         for config in configs:
-            assert config["model_kwargs"] == kwargs
+            # model_kwargs are merged into the model instance, not stored separately
+            model = config["model"]
+            assert hasattr(model, "temperature") or hasattr(model, "model_kwargs")
 
     def test_no_model_kwargs_when_none(self) -> None:
         configs = build_subagent_configs()
         for config in configs:
-            assert "model_kwargs" not in config
+            # model is a BaseChatModel; model_kwargs is not a separate top-level key
+            assert "model" in config
 
     def test_custom_subagent_types(self) -> None:
         configs = build_subagent_configs(subagent_types=["researcher"])

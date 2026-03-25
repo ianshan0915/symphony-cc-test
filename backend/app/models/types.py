@@ -65,6 +65,6 @@ class JSONType(TypeDecorator[dict[str, Any]]):
     def process_result_value(self, value: Any, dialect: Any) -> Any:
         if value is None:
             return None
-        if isinstance(value, dict):
+        if isinstance(value, (dict, list)):
             return value
         return json.loads(value)

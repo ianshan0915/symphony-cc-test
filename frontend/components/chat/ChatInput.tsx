@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { SendHorizontal } from "lucide-react";
+import { SendHorizontal, Square } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,8 @@ export interface ChatInputProps {
   onSend: (message: string) => void;
   /** Whether the agent is currently processing */
   isLoading?: boolean;
+  /** Called when user clicks the stop button during generation */
+  onStop?: () => void;
   /** Placeholder text for the input */
   placeholder?: string;
   /** Whether the input is disabled */
@@ -31,6 +33,7 @@ export interface ChatInputProps {
 export function ChatInput({
   onSend,
   isLoading = false,
+  onStop,
   placeholder = "Type a message\u2026",
   disabled = false,
   className,
@@ -77,7 +80,7 @@ export function ChatInput({
   return (
     <div
       className={cn(
-        "flex items-end gap-2 border-t border-border bg-background px-4 py-3",
+        "flex items-end gap-2 border-t border-border bg-background px-3 py-3 sm:px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
         className
       )}
     >
@@ -102,19 +105,28 @@ export function ChatInput({
           "min-h-[42px] max-h-[200px]"
         )}
       />
-      <Button
-        onClick={handleSend}
-        disabled={!canSend}
-        size="icon"
-        aria-label={isLoading ? "Agent is responding" : "Send message"}
-        className="shrink-0"
-      >
-        {isLoading ? (
-          <Spinner size="sm" className="text-primary-foreground" />
-        ) : (
+      {isLoading && onStop ? (
+        <Button
+          onClick={onStop}
+          size="icon"
+          variant="destructive"
+          aria-label="Stop generating"
+          title="Stop generating"
+          className="shrink-0"
+        >
+          <Square className="h-3.5 w-3.5" />
+        </Button>
+      ) : (
+        <Button
+          onClick={handleSend}
+          disabled={!canSend}
+          size="icon"
+          aria-label="Send message"
+          className="shrink-0"
+        >
           <SendHorizontal className="h-4 w-4" />
-        )}
-      </Button>
+        </Button>
+      )}
     </div>
   );
 }

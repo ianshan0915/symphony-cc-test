@@ -18,3 +18,4 @@ dist/
 # Symphony
 .symphony/
 .claude
+.pi/

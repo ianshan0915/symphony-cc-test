@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from app.agents.prompts import (
@@ -19,7 +20,6 @@ from app.agents.prompts import (
     get_tools_for_agent_type,
 )
 from app.agents.tools import TOOL_REGISTRY
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ def build_subagent_configs(
     model_name: str | None = None,
     model_kwargs: dict[str, Any] | None = None,
     subagent_types: list[str] | None = None,
+    llm: BaseChatModel | None = None,
 ) -> list[dict[str, Any]]:
     """Build subagent configuration dicts for the deepagents framework.
 
@@ -110,8 +111,10 @@ def build_subagent_configs(
         A list of subagent config dicts suitable for passing to
         ``create_deep_agent(subagents=...)``.
     """
+    from app.agents.factory import _get_chat_model  # local import to avoid circular
+
     types = subagent_types or SUBAGENT_TYPES
-    model = model_name or settings.default_model
+    resolved_llm: BaseChatModel = llm or _get_chat_model(model_name, **(model_kwargs or {}))
     configs: list[dict[str, Any]] = []
 
     for agent_type in types:
@@ -122,13 +125,10 @@ def build_subagent_configs(
         config: dict[str, Any] = {
             "name": agent_type,
             "description": description,
-            "model": model,
+            "model": resolved_llm,
             "system_prompt": prompt,
             "tools": tools,
         }
-
-        if model_kwargs:
-            config["model_kwargs"] = model_kwargs
 
         configs.append(config)
         logger.debug(
